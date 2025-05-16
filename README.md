@@ -40,3 +40,37 @@ $ cargo build --release
     load
     continue
     ```
+
+## Generate Image for AST1060
+
+- Generate Image for Programming
+
+   ```sh
+   cargo build;cargo objcopy -- -O binary ast10x0.bin
+   ```
+
+- Generate Image for Boot from UART
+   ```sh
+   cargo build;cargo objcopy -- -O binary ast10x0.bin
+   scripts/gen_uart_booting_image.py ast10x0.bin uart_ast10x0.bin
+   ```
+
+## Runing the app on QEMU
+
+### Build QEMU
+1. git clone https://github.com/qemu/qemu
+2. Run the following commands to build qemu
+   ```sh
+   mkdir build
+   cd build
+   ../qemu/configure --target-list=arm-linux-user,arm-softmmu,aarch64-softmmu,aarch64-linux-user,riscv32-softmmu --enable-docs --enable-slirp --enable-gcrypt
+   make -j 4
+   ```
+
+### Run
+1. Run the image in QEMU using `ast1030-evb` machine
+   ```sh
+   qemu-system-arm -M ast1030-evb -nographic -kernel ~/work/rot/aspeed/aspeed-rust/target/thumbv7em-none-eabihf/debug/aspeed-ddk
+   Hello, world!
+   aspeed_ddk!
+   ```

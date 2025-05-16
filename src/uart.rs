@@ -154,6 +154,9 @@ impl UartController<'_> {
 
 impl<'a> UartController<'a> {
     // Wait until the Transmitter Holding Register (THR) is empty
+    pub fn new(uart: Uart, delay: &'a mut dyn DelayNs) -> Self {
+        Self { uart, delay }
+    }
     pub fn wait_until_thr_empty(&mut self) {
         while self.uart.uartlsr().read().thre().bit_is_clear() {
             self.delay.delay_ns(1000); // Introduce a delay of 1000 nanoseconds (1 microsecond)
