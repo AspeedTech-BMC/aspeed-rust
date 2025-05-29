@@ -9,9 +9,9 @@ use ast1060_pac::{Wdt, Wdt1};
 use aspeed_ddk::watchdog::WdtController;
 
 use fugit::MillisDurationU32 as MilliSeconds;
-use aspeed_ddk::digest::HaceController;
+use aspeed_ddk::hash::HaceController;
 
-use aspeed_ddk::hash_test::run_hash_tests;
+use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
 use panic_halt as _;
 
 use cortex_m_rt::entry;
@@ -20,9 +20,6 @@ use embedded_hal::delay::DelayNs;
 use embedded_io::Write;
 use cortex_m_rt::pre_init;
 use core::ptr::{read_volatile, write_volatile};
-
-#[cfg(test)]
-mod hash_test;
 
 #[pre_init]
 unsafe fn pre_init() {
@@ -35,8 +32,8 @@ unsafe fn pre_init() {
     let cache_ctrl_offset: u32 = 0x7e6e2a58;
     write_volatile(cache_ctrl_offset as *mut u32, 0);
     let cache_area_offset: u32 = 0x7e6e2a50;
-    let cacahe_val = 0x0003_ffff;
-    write_volatile(cache_area_offset as *mut u32, cacahe_val);
+    let cache_val = 0x0003_ffff;
+    write_volatile(cache_area_offset as *mut u32, cache_val);
     write_volatile(cache_ctrl_offset as *mut u32, 1);
 }
 
@@ -117,12 +114,12 @@ fn main() -> ! {
         });
     }
 
-    let hace = _peripherals.hace;
+    let mut hace = _peripherals.hace;
     let scu = _peripherals.scu;
 
     writeln!(uart_controller, "\r\nHello, world!!\r\n").unwrap();
 
-    let mut hace_controller = HaceController::new(hace, scu);
+    let mut hace_controller = HaceController::new(&mut hace, &scu);
 
     run_hash_tests(&mut uart_controller, &mut hace_controller);
 

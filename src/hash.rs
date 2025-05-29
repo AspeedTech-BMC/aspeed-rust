@@ -1,7 +1,8 @@
 use ast1060_pac::Hace;
 use ast1060_pac::Scu;
 use embedded_hal::delay::DelayNs;
-
+use peripheral_traits_steven::digest::{Digest, ErrorType};
+use core::sync::atomic::{AtomicBool, Ordering};
 struct DummyDelay;
 
 impl embedded_hal::delay::DelayNs for DummyDelay {
@@ -12,126 +13,7 @@ impl embedded_hal::delay::DelayNs for DummyDelay {
     }
 }
 
-/// Error kind.
-///
-/// This represents a common set of digest operation errors. Implementations are
-/// free to define more specific or additional error types. However, by providing
-/// a mapping to these common errors, generic code can still react to them.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[non_exhaustive]
-pub enum ErrorKind {
-    /// The input data length is not valid for the hash function.
-    InvalidInputLength,
-
-    /// The specified hash algorithm is not supported by the hardware or software implementation.
-    UnsupportedAlgorithm,
-
-    /// Failed to allocate memory for the hash computation.
-    MemoryAllocationFailure,
-
-    /// Failed to initialize the hash computation context.
-    InitializationError,
-
-    /// Error occurred while updating the hash computation with new data.
-    UpdateError,
-
-    /// Error occurred while finalizing the hash computation.
-    FinalizationError,
-
-    /// The hardware accelerator is busy and cannot process the hash computation.
-    Busy,
-
-    /// General hardware failure during hash computation.
-    HardwareFailure,
-
-    /// The specified output size is not valid for the hash function.
-    InvalidOutputSize,
-
-    /// Insufficient permissions to access the hardware or perform the hash computation.
-    PermissionDenied,
-
-    /// The hash computation context has not been initialized.
-    NotInitialized,
-}
-
-pub trait Error: core::fmt::Debug {
-    /// Convert error to a generic error kind
-    ///
-    /// By using this method, errors freely defined by HAL implementations
-    /// can be converted to a set of generic errors upon which generic
-    /// code can act.
-    fn kind(&self) -> ErrorKind;
-}
-
-impl Error for core::convert::Infallible {
-    fn kind(&self) -> ErrorKind {
-        match *self {}
-    }
-}
-
-pub trait ErrorType {
-    /// Error type.
-    type Error: Error;
-}
-
-pub trait DigestCtrl: ErrorType {
-    type InitParams<'a>: where Self: 'a;
-    type OpContext<'a>: DigestOp where Self: 'a;
-
-    /// Init instance of the crypto function with the given context.
-    ///
-    /// # Parameters
-    ///
-    /// - `init_params`: The context or configuration parameters for the crypto function.
-    ///
-    /// # Returns
-    ///
-    /// A new instance of the hash function.
-    unsafe fn init<'a>(&'a mut self, init_params: Self::InitParams<'a>) -> Result<Self::OpContext<'a>, Self::Error>;
-}
-
-pub trait DigestCtrlReset: ErrorType {
-    /// Reset instance to its initial state.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating success or failure. On success, returns `Ok(())`. On failure, returns a `CryptoError`.
-    fn reset(&mut self) -> Result<(), Self::Error>;
-
-}
-
-pub trait OutputSize {
-    fn output_size(&self) -> usize;
-}
-
-// pub trait DigestOp: ErrorType + OutputSizeUser {
-pub trait DigestOp: ErrorType + OutputSize {
-
-
-    /// Update state using provided input data.
-    ///
-    /// # Parameters
-    ///
-    /// - `input`: The input data to be hashed. This can be any type that implements `AsRef<[u8]>`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating success or failure. On success, returns `Ok(())`. On failure, returns a `CryptoError`.
-    unsafe fn update(&mut self, input: &[u8]) -> Result<(), Self::Error>;
-
-
-    /// Finalize the computation and produce the output.
-    ///
-    /// # Parameters
-    ///
-    /// - `out`: A mutable slice to store the hash output. The length of the slice must be at least `MAX_OUTPUT_SIZE`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating success or failure. On success, returns `Ok(())`. On failure, returns a `CryptoError`.
-    unsafe fn finalize(&mut self, output: &mut [u8]) -> Result<(), Self::Error>;
-
-}
+static HACE_ENABLED: AtomicBool = AtomicBool::new(false);
 
 const SHA1_IV: [u32; 8] = [
     0x0123_4567, 0x89ab_cdef, 0xfedc_ba98, 0x7654_3210,
@@ -245,6 +127,7 @@ impl AspeedHashContext {
     }
 }
 
+#[derive(Copy, Clone)]
 pub enum HashAlgo {
     SHA1,
     SHA224,
@@ -318,65 +201,54 @@ impl HashAlgo {
 #[link_section = ".ram_nc"]
 static mut HASH_CTX: AspeedHashContext = AspeedHashContext::new();
 
-pub struct HaceController {
-    hace: Hace,
-    scu: Scu,
-    initialized: bool,
+pub struct HaceController<'a> {
+    hace: &'a Hace,
+    scu: &'a Scu,
     algo: HashAlgo,
     aspeed_hash_ctx: *mut AspeedHashContext,
 }
 
-impl<'a> HaceController {
-    pub fn new(hace: Hace, scu:Scu) -> Self {
-        Self { hace, scu, initialized: false, algo: HashAlgo::SHA256, aspeed_hash_ctx: core::ptr::addr_of_mut!(HASH_CTX)  }
+impl<'a> HaceController<'a> {
+    pub fn new(hace: &'a mut Hace, scu: &'a Scu) -> Self {
+        Self { hace, scu, algo: HashAlgo::SHA256, aspeed_hash_ctx: core::ptr::addr_of_mut!(HASH_CTX)  }
     }
 }
 
-impl ErrorType for HaceController {
+impl ErrorType for HaceController<'_> {
     type Error = core::convert::Infallible;
 }
 
-impl DigestCtrl for HaceController {
-    type InitParams<'a> = HashAlgo where Self: 'a;
-    type OpContext<'a> = &'a mut Self where Self: 'a;
+impl<'a> Digest for HaceController<'a> {
+    // type InitParams = HashAlgo;
+    type InitParams = HashAlgo;
 
-    unsafe fn init<'a>(&'a mut self, params: HashAlgo) -> Result<Self::OpContext<'a>, Self::Error> {
-        if !self.initialized {
-            self.scu.scu084().write(|w| {
-                w.scu080clk_stop_ctrl_clear_reg().bits(1 << 13)
-            });
+    fn init(&mut self, params: Self::InitParams) -> Result<(), Self::Error> {
+                                                       //
+        unsafe {
+            if !HACE_ENABLED.load(Ordering::SeqCst) {
+                self.scu.scu084().write(|w| {
+                    w.scu080clk_stop_ctrl_clear_reg().bits(1 << 13)
+                });
 
-            let mut delay = DummyDelay;
-            delay.delay_ns(10000000);
+                let mut delay = DummyDelay;
+                delay.delay_ns(10000000);
 
-            // Release the hace reset
-            self.scu.scu044().write(|w| w.bits(0x10));
-            self.initialized = true;
+                // Release the hace reset
+                self.scu.scu044().write(|w| w.bits(0x10));
+                HACE_ENABLED.store(true, Ordering::Relaxed);
+            }
         }
-
         self.algo = params;
         self.ctx_mut().method = self.algo.hash_cmd();
         self.copy_iv_to_digest();
         self.ctx_mut().block_size = self.algo.block_size() as u32;
-
         self.ctx_mut().bufcnt = 0;
         self.ctx_mut().digcnt = [0; 2];
-        Ok(self)
+
+        Ok(())
     }
-}
 
-impl<'a> ErrorType for &'a mut HaceController {
-    type Error = core::convert::Infallible;
-}
-
-impl<'a> OutputSize for &'a mut HaceController {
-    fn output_size(&self) -> usize {
-        self.algo.digest_size()
-    }
-}
-
-impl<'a> DigestOp for &'a mut HaceController {
-    unsafe fn update(&mut self, _input: &[u8]) -> Result<(), Self::Error> {
+    fn update(&mut self, _input: &mut [u8]) -> Result<(), Self::Error> {
         let input_len = _input.len() as u32;
         let (new_len, carry) = self.ctx_mut().digcnt[0].overflowing_add(input_len as u64);
 
@@ -424,7 +296,18 @@ impl<'a> DigestOp for &'a mut HaceController {
         Ok(())
     }
 
-    unsafe fn finalize(&mut self, _output: &mut [u8]) -> Result<(), Self::Error> {
+    fn reset(&mut self) -> Result<(), Self::Error> {
+        {
+            let ctx = self.ctx_mut();
+            ctx.bufcnt = 0;
+            ctx.buffer.fill(0);
+            ctx.digest.fill(0);
+            ctx.digcnt = [0; 2];
+        }
+        Ok(())
+    }
+
+    fn finalize(&mut self, _output: &mut [u8]) -> Result<(), Self::Error> {
         self.fill_padding(0);
         let digest_len = self.algo.digest_size();
 
@@ -439,7 +322,9 @@ impl<'a> DigestOp for &'a mut HaceController {
 
         self.start_hash_operation(bufcnt);
 
-        _output.copy_from_slice(core::slice::from_raw_parts(digest_ptr, digest_len));
+        unsafe {
+            _output.copy_from_slice(core::slice::from_raw_parts(digest_ptr, digest_len));
+        }
 
         {
             let ctx = self.ctx_mut();
@@ -449,18 +334,24 @@ impl<'a> DigestOp for &'a mut HaceController {
             ctx.digcnt = [0; 2];
         }
 
-        self.hace.hace30().write(|w| w.bits(0));
+        unsafe {
+            self.hace.hace30().write(|w| w.bits(0));
+        }
 
         Ok(())
     }
 }
 
-impl HaceController {
+impl<'a> ErrorType for &'a mut HaceController<'a> {
+    type Error = core::convert::Infallible;
+}
+
+impl HaceController<'_> {
     pub fn ctx_mut(&mut self) -> &mut AspeedHashContext {
         unsafe { &mut *self.aspeed_hash_ctx }
     }
 
-    unsafe fn start_hash_operation(&mut self, _len: u32) {
+    fn start_hash_operation(&mut self, _len: u32) {
         self.hace.hace1c().write(|w| w.hash_intflag().set_bit());
         let ctx = self.ctx_mut();
 
@@ -473,16 +364,19 @@ impl HaceController {
         let digest_addr = ctx.digest.as_ptr() as u32;
         let method = ctx.method;
 
-        self.hace.hace1c().write(|w| w.hash_intflag().set_bit());
-        self.hace.hace20().write(|w| w.bits(src_addr));
-        self.hace.hace24().write(|w| w.bits(digest_addr));
-        self.hace.hace28().write(|w| w.bits(digest_addr));
-        self.hace.hace2c().write(|w| w.bits(_len));
-        self.hace.hace30().write(|w| w.bits(method));
-        // blocking wait until hash engine ready
-        while self.hace.hace1c().read().hash_intflag().bit_is_clear() {
-            // wait for the hash operation to complete
-            cortex_m::asm::nop();
+
+        unsafe {
+            self.hace.hace1c().write(|w| w.hash_intflag().set_bit());
+            self.hace.hace20().write(|w| w.bits(src_addr));
+            self.hace.hace24().write(|w| w.bits(digest_addr));
+            self.hace.hace28().write(|w| w.bits(digest_addr));
+            self.hace.hace2c().write(|w| w.bits(_len));
+            self.hace.hace30().write(|w| w.bits(method));
+            // blocking wait until hash engine ready
+            while self.hace.hace1c().read().hash_intflag().bit_is_clear() {
+                // wait for the hash operation to complete
+                cortex_m::asm::nop();
+            }
         }
         // let mut delay = DummyDelay;
         // delay.delay_ns(10000000);
