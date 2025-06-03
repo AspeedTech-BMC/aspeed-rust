@@ -4,7 +4,7 @@
 use core::sync::atomic::AtomicBool;
 // use core::arch::asm;
 use ast1060_pac::Peripherals;
-use aspeed_ddk::uart::{Config, UartController};
+use aspeed_ddk::{gpio::{gpioa, Floating, GpioExt}, uart::{Config, UartController}};
 use ast1060_pac::{Wdt, Wdt1};
 use aspeed_ddk::watchdog::WdtController;
 
@@ -20,7 +20,7 @@ use aspeed_ddk::tests::functional::rsa_test::run_rsa_tests;
 use panic_halt as _;
 
 use cortex_m_rt::entry;
-use embedded_hal::delay::DelayNs;
+use embedded_hal::{delay::DelayNs, digital::{InputPin, OutputPin, StatefulOutputPin}};
 
 use embedded_io::Write;
 use cortex_m_rt::pre_init;
@@ -80,6 +80,42 @@ fn test_wdt( uart:&mut UartController<'_>) {
             uart.write_all(b"stop wdt\r\n").unwrap();
             break;
         }
+    }
+}
+fn test_gpio(uart:&mut UartController<'_>) {
+    let _peripherals = unsafe { Peripherals::steal() };
+    let gpio = _peripherals.gpio;
+
+    let gpioa = gpioa::GPIOA::new(gpio).split();
+    uart.write_all(b"\r\n####### GPIO test #######\r\n").unwrap();
+    // input test
+    let mut pa0 = gpioa.pa0.into_pull_down_input();
+    if pa0.is_low().unwrap() {
+        uart.write_all(b"\rGPIOA pin0 is low\r\n").unwrap();
+    }
+    let mut pa1 = gpioa.pa1.into_pull_up_input();
+    if pa1.is_high().unwrap() {
+        uart.write_all(b"\rGPIOA pin1 is high\r\n").unwrap();
+    }
+    // output test
+    let mut pa3 = gpioa.pa3.into_open_drain_output::<Floating>();
+    pa3.set_low().unwrap();
+    if pa3.is_set_low().unwrap() {
+        uart.write_all(b"\rGPIOA pin3 set low successfully\r\n").unwrap();
+    }
+    pa3.set_high().unwrap();
+    if pa3.is_set_high().unwrap() {
+        uart.write_all(b"\rGPIOA pin3 set high successfully\r\n").unwrap();
+    }
+
+    let mut pa4 = gpioa.pa4.into_push_pull_output();
+    pa4.set_low().unwrap();
+    if pa4.is_set_low().unwrap() {
+        uart.write_all(b"\rGPIOA pin4 set low successfully\r\n").unwrap();
+    }
+    pa4.set_high().unwrap();
+    if pa4.is_set_high().unwrap() {
+        uart.write_all(b"\rGPIOA pin4 set high successfully\r\n").unwrap();
     }
 }
 
@@ -147,7 +183,7 @@ fn main() -> ! {
 
     let mut rsa = AspeedRsa::new(&secure, delay);
     run_rsa_tests(&mut uart_controller, &mut rsa);
-
+    test_gpio(&mut uart_controller);
     test_wdt(&mut uart_controller);
     // Initialize the peripherals here if needed
     loop {}
