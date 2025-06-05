@@ -1,7 +1,9 @@
 use crate::uart::UartController;
-use crate::digest::{DigestCtrl, DigestOp, HashAlgo, HaceController};
-
+use crate::hash::{Controller, OpContextImpl, HashAlgo};
+use proposed_traits::digest::{DigestInit, DigestOp};
 use embedded_io::Write;
+
+
 
 fn print_hex_array(uart: &mut UartController, data: &[u8], bytes_per_line: usize) {
     for (i, b) in data.iter().enumerate() {
@@ -34,13 +36,14 @@ fn print_input(uart: &mut UartController, algo: &str, input: &[u8]) {
     writeln!(uart, "]:").unwrap();
 }
 
-pub fn run_hash_tests(uart: &mut UartController, hace: &mut HaceController) {
-    run_hash(uart, hace, HashAlgo::SHA256, b"hello_world", 32);
-    run_hash(uart, hace, HashAlgo::SHA384, b"hello_world", 48);
-    run_hash(uart, hace, HashAlgo::SHA512, b"hello_world", 64);
+pub fn run_hash_tests(uart: &mut UartController, hace: &mut Controller) {
+    let mut input = *b"hello_world";
+    run_hash(uart, hace, HashAlgo::SHA256, &mut input, 32);
+    run_hash(uart, hace, HashAlgo::SHA384, &mut input, 48);
+    run_hash(uart, hace, HashAlgo::SHA512, &mut input, 64);
 }
 
-fn run_hash(uart: &mut UartController, ctrl: &mut HaceController, algo: HashAlgo, input: &[u8], digest_len: usize) {
+fn run_hash(uart: &mut UartController, ctrl: &mut Controller, algo: HashAlgo, input: &mut [u8], digest_len: usize) {
     let string_algo = match algo {
         HashAlgo::SHA1 => "SHA1",
         HashAlgo::SHA224 => "SHA224",
@@ -50,15 +53,17 @@ fn run_hash(uart: &mut UartController, ctrl: &mut HaceController, algo: HashAlgo
         HashAlgo::SHA512_224 => "SHA512_224",
         HashAlgo::SHA512_256 => "SHA512_256",
     };
-    let mut ctx = unsafe { ctrl.init(algo).unwrap() };
-    unsafe {
-        ctx.update(input).unwrap();
 
-        let mut output = [0u8; 64]; // max buffer
-        ctx.finalize(&mut output[..digest_len]).unwrap();
+    ctrl.init(algo).unwrap();
 
-        print_input(uart, string_algo, input);
-        print_hex_array(uart, &output[..digest_len], 16);
-    }
+    let mut ctx = OpContextImpl { controller: ctrl };
+
+    ctx.update(input).unwrap();
+
+    let mut output = [0u8; 64]; // max buffer
+    ctx.finalize(&mut output[..digest_len]).unwrap();
+
+    print_input(uart, string_algo, input);
+    print_hex_array(uart, &output[..digest_len], 16);
 }
 
