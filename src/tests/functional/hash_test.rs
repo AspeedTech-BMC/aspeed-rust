@@ -1,6 +1,6 @@
 use crate::uart::UartController;
-use crate::hash::{Controller, OpContextImpl, HashAlgo};
-use proposed_traits::digest::{DigestInit, DigestOp};
+use crate::hash::{Sha256, Sha384, Sha512, Controller, IntoHashAlgo};
+use proposed_traits::digest::{DigestInit, DigestOp, DigestAlgorithm};
 use embedded_io::Write;
 
 
@@ -37,33 +37,22 @@ fn print_input(uart: &mut UartController, algo: &str, input: &[u8]) {
 }
 
 pub fn run_hash_tests(uart: &mut UartController, hace: &mut Controller) {
-    let mut input = *b"hello_world";
-    run_hash(uart, hace, HashAlgo::SHA256, &mut input, 32);
-    run_hash(uart, hace, HashAlgo::SHA384, &mut input, 48);
-    run_hash(uart, hace, HashAlgo::SHA512, &mut input, 64);
+    let input = *b"hello_world";
+
+    run_hash::<Sha256>(uart, hace, &input);
+    run_hash::<Sha384>(uart, hace, &input);
+    run_hash::<Sha512>(uart, hace, &input);
 }
 
-fn run_hash(uart: &mut UartController, ctrl: &mut Controller, algo: HashAlgo, input: &mut [u8], digest_len: usize) {
-    let string_algo = match algo {
-        HashAlgo::SHA1 => "SHA1",
-        HashAlgo::SHA224 => "SHA224",
-        HashAlgo::SHA256 => "SHA256",
-        HashAlgo::SHA384 => "SHA384",
-        HashAlgo::SHA512 => "SHA512",
-        HashAlgo::SHA512_224 => "SHA512_224",
-        HashAlgo::SHA512_256 => "SHA512_256",
-    };
-
-    ctrl.init(algo).unwrap();
-
-    let mut ctx = OpContextImpl { controller: ctrl };
-
+fn run_hash<A>(uart: &mut UartController, ctrl: &mut Controller, input: &[u8])
+where
+    A: DigestAlgorithm + IntoHashAlgo + Default,
+    A::DigestOutput: Default + AsRef<[u8]> + AsMut<[u8]>,
+{
+    let mut ctx = ctrl.init(A::default()).unwrap();
     ctx.update(input).unwrap();
+    let output = ctx.finalize().unwrap();
 
-    let mut output = [0u8; 64]; // max buffer
-    ctx.finalize(&mut output[..digest_len]).unwrap();
-
-    print_input(uart, string_algo, input);
-    print_hex_array(uart, &output[..digest_len], 16);
+    print_input(uart, core::any::type_name::<A>(), input);
+    print_hex_array(uart, output.as_ref(), 16);
 }
-

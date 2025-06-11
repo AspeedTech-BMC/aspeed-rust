@@ -23,4 +23,12 @@ impl<D: DelayNs> SysCon<D> {
             self.scu.scu044().write(|w| w.bits(0x10));
         }
     }
+    pub fn enable_rsa_ecc(&mut self) {
+        unsafe {
+            // Enable RSA/ECC clock
+            self.scu
+                .scu094()
+                .write(|w| w.scu090clk_stop_ctrl_clear_reg_set2().bits(1 << 6));
+        }
+    }
 }

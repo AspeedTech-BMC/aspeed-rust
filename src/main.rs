@@ -9,10 +9,12 @@ use ast1060_pac::{Wdt, Wdt1};
 use aspeed_ddk::watchdog::WdtController;
 
 use fugit::MillisDurationU32 as MilliSeconds;
-use aspeed_ddk::hash::Controller;
+use aspeed_ddk::hash::{Controller, Sha384};
 use aspeed_ddk::syscon::SysCon;
+use aspeed_ddk::ecdsa::AspeedEcdsa;
 
 use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
+use aspeed_ddk::tests::functional::ecdsa_test::run_ecdsa_tests;
 use panic_halt as _;
 
 use cortex_m_rt::entry;
@@ -41,7 +43,7 @@ unsafe fn pre_init() {
     write_volatile(cache_ctrl_offset as *mut u32, 1);
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct DummyDelay;
 
 impl DelayNs for DummyDelay {
@@ -121,19 +123,25 @@ fn main() -> ! {
 
     let hace = _peripherals.hace;
     let scu = _peripherals.scu;
+    let secure = _peripherals.secure;
 
     writeln!(uart_controller, "\r\nHello, world!!\r\n").unwrap();
 
 
     // Enable HACE (Hash and Crypto Engine)
     let delay = DummyDelay::default();
-    // let scu = ast1060_pac::Scu::take().unwrap();
-    let mut syscon = SysCon::new(delay, scu);
+    let mut syscon = SysCon::new(delay.clone(), scu);
     syscon.enable_hace();
 
     let mut hace_controller = Controller::new(hace);
 
     run_hash_tests(&mut uart_controller, &mut hace_controller);
+
+    // Enable RSA and ECC
+    syscon.enable_rsa_ecc();
+
+    let mut ecdsa = AspeedEcdsa::new(&secure, delay.clone());
+    run_ecdsa_tests::<Sha384>(&mut uart_controller, &mut ecdsa);
 
     test_wdt(&mut uart_controller);
     // Initialize the peripherals here if needed
