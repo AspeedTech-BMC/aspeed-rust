@@ -10,10 +10,11 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-semihosting",
- "embedded-hal 1.0.0",
+ "embedded-hal 1.0.0 (git+https://github.com/rust-embedded/embedded-hal.git)",
  "embedded-hal 1.0.0-alpha.1",
  "embedded-io",
  "fugit",
+ "hex-literal",
  "panic-halt",
  "proposed-traits",
 ]
@@ -124,6 +125,12 @@ dependencies = [
 [[package]]
 name = "embedded-hal"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
+
+[[package]]
+name = "embedded-hal"
+version = "1.0.0"
 source = "git+https://github.com/rust-embedded/embedded-hal.git#520945278942c301433c391f63a075227d9e7c84"
 
 [[package]]
@@ -152,6 +159,12 @@ name = "gcd"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d758ba1b47b00caf47f24925c0074ecb20d6dfcffe7f6d53395c0465674841a"
+
+[[package]]
+name = "hex-literal"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
 
 [[package]]
 name = "nb"
@@ -186,9 +199,11 @@ dependencies = [
 [[package]]
 name = "proposed-traits"
 version = "0.1.0"
-source = "git+https://github.com/rusty1968/proposed_traits.git?rev=c111f111c292766846c5b10c221339d5e39dea23#c111f111c292766846c5b10c221339d5e39dea23"
+source = "git+https://github.com/rusty1968/proposed_traits.git?rev=dec01ffb239d7a61875a8131992388983f7f45b3#dec01ffb239d7a61875a8131992388983f7f45b3"
 dependencies = [
  "async-trait",
+ "embedded-hal 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "embedded-io",
  "embedded-storage",
  "rand_core",
 ]

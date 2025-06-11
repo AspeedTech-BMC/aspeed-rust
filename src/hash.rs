@@ -257,6 +257,116 @@ impl HashAlgo {
     }
 }
 
+// DigestAlgorithm implementation for HashAlgo
+impl DigestAlgorithm for HashAlgo {
+    const OUTPUT_BITS: usize = 512; // Maximum size for all variants
+    type DigestOutput = [u8; 64]; // Use the maximum size for all variants
+}
+
+pub trait IntoHashAlgo {
+    fn to_hash_algo() -> HashAlgo;
+}
+
+pub struct Digest48(pub [u8; 48]);
+
+impl Default for Digest48 {
+    fn default() -> Self {
+        Digest48([0u8; 48])
+    }
+}
+
+impl AsRef<[u8]> for Digest48 {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for Digest48 {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+pub struct Digest64(pub [u8; 64]);
+impl Default for Digest64 {
+    fn default() -> Self {
+        Digest64([0u8; 64])
+    }
+}
+
+impl AsRef<[u8]> for Digest64 {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for Digest64 {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+pub struct Sha1;
+pub struct Sha224;
+pub struct Sha256;
+pub struct Sha384;
+pub struct Sha512;
+
+impl DigestAlgorithm for Sha1 {
+    const OUTPUT_BITS: usize = 160;
+    type DigestOutput = [u8; 20];
+}
+
+impl DigestAlgorithm for Sha224 {
+    const OUTPUT_BITS: usize = 224;
+    type DigestOutput = [u8; 28];
+}
+
+impl DigestAlgorithm for Sha256 {
+    const OUTPUT_BITS: usize = 256;
+    type DigestOutput = [u8; 32];
+}
+
+impl DigestAlgorithm for Sha384 {
+    const OUTPUT_BITS: usize = 384;
+    type DigestOutput = Digest48; // Use Digest48 for 384 bits
+}
+
+impl DigestAlgorithm for Sha512 {
+    const OUTPUT_BITS: usize = 512;
+    type DigestOutput = Digest64; // Use Digest64 for 512 bits
+}
+
+impl Default for Sha256 {
+    fn default() -> Self { Sha256 }
+}
+
+impl Default for Sha384 {
+    fn default() -> Self { Sha384 }
+}
+
+impl Default for Sha512 {
+    fn default() -> Self { Sha512 }
+}
+
+
+impl IntoHashAlgo for Sha256 {
+    fn to_hash_algo() -> HashAlgo {
+        HashAlgo::SHA256
+    }
+}
+
+impl IntoHashAlgo for Sha384 {
+    fn to_hash_algo() -> HashAlgo {
+        HashAlgo::SHA384
+    }
+}
+
+impl IntoHashAlgo for Sha512 {
+    fn to_hash_algo() -> HashAlgo {
+        HashAlgo::SHA512
+    }
+}
 
 pub struct Controller {
     hace: Hace,
@@ -275,9 +385,8 @@ impl Controller {
 }
 
 
-// Implement the required trait for Controller
 impl<'a> proposed_traits::digest::ErrorType for Controller {
-    type Error = Infallible; // Define your error type here
+    type Error = Infallible;
 }
 
 impl Controller {
@@ -361,13 +470,15 @@ impl Controller {
 }
 
 
-impl DigestInit for Controller {
-    type InitParams = HashAlgo; // Define your InitParams type here
-    type OpContext<'a> = OpContextImpl<'a> where Self: 'a; // Define your OpContext type here
+impl<A> DigestInit<A> for Controller
+where
+    A: DigestAlgorithm + IntoHashAlgo,
+    A::DigestOutput: Default + AsMut<[u8]>,
+{
+    type OpContext<'a> = OpContextImpl<'a, A> where Self: 'a; // Define your OpContext type here
 
-    fn init<'a>(&'a mut self, init_params: Self::InitParams) -> Result<Self::OpContext<'a>, Self::Error> {
-
-        self.algo = init_params;
+    fn init<'a>(&'a mut self, _algo: A) -> Result<Self::OpContext<'a>, Self::Error> {
+        self.algo = A::to_hash_algo();
         self.ctx_mut().method = self.algo.hash_cmd();
         self.copy_iv_to_digest();
         self.ctx_mut().block_size = self.algo.block_size() as u32;
@@ -377,19 +488,29 @@ impl DigestInit for Controller {
 
         Ok(OpContextImpl {
             controller: self,
+            _phantom: core::marker::PhantomData,
         })
     }
 }
 
-pub struct OpContextImpl<'a> {
+pub struct OpContextImpl<'a, A: DigestAlgorithm + IntoHashAlgo> {
     pub controller: &'a mut Controller,
+    _phantom: core::marker::PhantomData<A>,
 }
 
-impl<'a> proposed_traits::digest::ErrorType for OpContextImpl<'a> {
+impl<'a, A> proposed_traits::digest::ErrorType for OpContextImpl<'a, A>
+where
+    A: DigestAlgorithm + IntoHashAlgo,
+{
     type Error = Infallible;
 }
 
-impl<'a> DigestOp for OpContextImpl<'a> {
+impl<'a, A> DigestOp for OpContextImpl<'a, A>
+where
+    A: DigestAlgorithm + IntoHashAlgo,
+    A::DigestOutput: Default + AsMut<[u8]>
+{
+    type Output = A::DigestOutput;
 
     fn update(&mut self, _input: &[u8]) -> Result<(), Self::Error> {
         let input_len = _input.len() as u32;
@@ -441,7 +562,7 @@ impl<'a> DigestOp for OpContextImpl<'a> {
     }
 
 
-    fn finalize(&mut self, _output: &mut [u8]) -> Result<(), Self::Error> {
+    fn finalize(self) -> Result<Self::Output, Self::Error> {
         self.controller.fill_padding(0);
         let digest_len = self.controller.algo.digest_size();
 
@@ -456,22 +577,23 @@ impl<'a> DigestOp for OpContextImpl<'a> {
 
         self.controller.start_hash_operation(bufcnt);
 
-        unsafe {
-            _output.copy_from_slice(core::slice::from_raw_parts(digest_ptr, digest_len));
-        }
+    let slice = unsafe {
+        core::slice::from_raw_parts(digest_ptr, digest_len)
+    };
 
-        {
-            let ctx = self.controller.ctx_mut();
-            ctx.bufcnt = 0;
-            ctx.buffer.fill(0);
-            ctx.digest.fill(0);
-            ctx.digcnt = [0; 2];
-        }
+    let mut output = A::DigestOutput::default();
+    output.as_mut()[..digest_len].copy_from_slice(slice);
+
+        let ctx = self.controller.ctx_mut();
+        ctx.bufcnt = 0;
+        ctx.buffer.fill(0);
+        ctx.digest.fill(0);
+        ctx.digcnt = [0; 2];
 
         unsafe {
             self.controller.hace.hace30().write(|w| w.bits(0));
         }
 
-        Ok(()) // Return the final output
+        Ok(output) // Return the final output
     }
 }
