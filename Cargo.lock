@@ -21,7 +21,7 @@ dependencies = [
 [[package]]
 name = "ast1060-pac"
 version = "0.1.0"
-source = "git+https://github.com/rusty1968/ast1060-pac.git#dd1e5357d8274987b3e5a864a7bc49310bc0ccf7"
+source = "git+https://github.com/AspeedTech-BMC/ast1060-pac.git#33833338103f511b768ad8ff1c8bc66362db3cf8"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
