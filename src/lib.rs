@@ -16,3 +16,5 @@ pub mod syscon;
 pub mod tests;
 pub mod uart;
 pub mod watchdog;
+pub mod i2c;
+pub mod common;
