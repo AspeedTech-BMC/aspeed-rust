@@ -1,9 +1,9 @@
 use ast1060_pac::Hace;
-use proposed_traits::digest::*;
+use proposed_traits::mac::*;
 use core::convert::Infallible;
 
 #[link_section = ".ram_nc"]
-static mut HASH_CTX: AspeedHashContext = AspeedHashContext::new();
+static mut HMAC_CTX: AspeedHashContext = AspeedHashContext::new();
 
 
 const SHA1_IV: [u32; 8] = [
@@ -115,6 +115,7 @@ const SHA512_256_IV: [u32; 16] = [
     0xA22C_C581,
 ];
 
+
 const HACE_SHA_BE_EN: u32 = 1 << 3;
 const HACE_SG_EN: u32 = 1 << 18;
 const HACE_CMD_ACC_MODE: u32 = 1 << 8;
@@ -127,7 +128,6 @@ const HACE_ALGO_SHA384: u32 = (1 << 5) | (1 << 6) | (1 << 10);
 const HACE_ALGO_SHA512_224: u32 = (1 << 5) | (1 << 6) | (1 << 10) | (1 << 11);
 const HACE_ALGO_SHA512_256: u32 = (1 << 5) | (1 << 6) | (1 << 11);
 
-const HACE_SG_LAST: u32 = 1 << 31;
 #[derive(Default, Copy, Clone)]
 pub struct AspeedSg {
     pub len: u32,
@@ -148,6 +148,10 @@ pub struct AspeedHashContext {
     pub digest: [u8; 64],
     pub method: u32,
     pub block_size: u32,
+    pub key: [u8; 128],
+    pub key_len: u32,
+    pub ipad: [u8; 128],
+    pub opad: [u8; 128],
     pub digcnt: [u64; 2],
     pub bufcnt: u32,
     pub buffer: [u8; 256],
@@ -161,6 +165,10 @@ impl Default for AspeedHashContext {
             digest: [0; 64],
             method: 0,
             block_size: 0,
+            key: [0; 128],
+            key_len: 0,
+            ipad: [0; 128],
+            opad: [0; 128],
             digcnt: [0; 2],
             bufcnt: 0,
             buffer: [0; 256],
@@ -177,6 +185,10 @@ impl AspeedHashContext {
             method: 0,
             block_size: 0,
             digcnt: [0; 2],
+            key: [0; 128],
+            key_len: 0,
+            ipad: [0; 128],
+            opad: [0; 128],
             bufcnt: 0,
             buffer: [0; 256],
             iv_size: 0,
@@ -196,7 +208,7 @@ pub enum HashAlgo {
 }
 
 impl HashAlgo {
-    pub fn digest_size(&self) -> usize {
+    pub const fn digest_size(&self) -> usize {
         match self {
             HashAlgo::SHA1 => 20,
             HashAlgo::SHA224 | HashAlgo::SHA512_224 => 28,
@@ -206,7 +218,7 @@ impl HashAlgo {
         }
     }
 
-    pub fn block_size(&self) -> usize {
+    pub const fn block_size(&self) -> usize {
         match self {
             HashAlgo::SHA1 | HashAlgo::SHA224 | HashAlgo::SHA256 => 64,
             HashAlgo::SHA384 | HashAlgo::SHA512 | HashAlgo::SHA512_224 | HashAlgo::SHA512_256 => {
@@ -215,7 +227,7 @@ impl HashAlgo {
         }
     }
 
-    pub fn bitmask(&self) -> u32 {
+    pub const fn bitmask(&self) -> u32 {
         match self {
             HashAlgo::SHA1 => HACE_ALGO_SHA1,
             HashAlgo::SHA224 => HACE_ALGO_SHA224,
@@ -227,7 +239,7 @@ impl HashAlgo {
         }
     }
 
-    pub fn iv(&self) -> &'static [u32] {
+    pub const fn iv(&self) -> &'static [u32] {
         match self {
             HashAlgo::SHA1 => &SHA1_IV,
             HashAlgo::SHA224 => &SHA224_IV,
@@ -239,7 +251,7 @@ impl HashAlgo {
         }
     }
 
-    pub fn iv_size(&self) -> usize {
+    pub const fn iv_size(&self) -> usize {
         match self {
             HashAlgo::SHA1 => SHA1_IV.len(),
             HashAlgo::SHA224 => SHA224_IV.len(),
@@ -257,10 +269,11 @@ impl HashAlgo {
     }
 }
 
-// DigestAlgorithm implementation for HashAlgo
-impl DigestAlgorithm for HashAlgo {
+// MacAlgorithm implementation for HashAlgo
+impl MacAlgorithm for HashAlgo {
     const OUTPUT_BITS: usize = 512; // Maximum size for all variants
-    type DigestOutput = [u8; 64]; // Use the maximum size for all variants
+    type MacOutput = [u8; 64]; // Use the maximum size for all variants
+    type Key = [u8; 64]; // Use the maximum size for all variants
 }
 
 pub trait IntoHashAlgo {
@@ -306,35 +319,41 @@ impl AsMut<[u8]> for Digest64 {
     }
 }
 
+
 pub struct Sha1;
 pub struct Sha224;
 pub struct Sha256;
 pub struct Sha384;
 pub struct Sha512;
 
-impl DigestAlgorithm for Sha1 {
+impl MacAlgorithm for Sha1 {
     const OUTPUT_BITS: usize = 160;
-    type DigestOutput = [u8; 20];
+    type MacOutput = [u8; 20];
+    type Key = [u8; 64];
 }
 
-impl DigestAlgorithm for Sha224 {
+impl MacAlgorithm for Sha224 {
     const OUTPUT_BITS: usize = 224;
-    type DigestOutput = [u8; 28];
+    type MacOutput = [u8; 28];
+    type Key = [u8; 64];
 }
 
-impl DigestAlgorithm for Sha256 {
+impl MacAlgorithm for Sha256 {
     const OUTPUT_BITS: usize = 256;
-    type DigestOutput = [u8; 32];
+    type MacOutput = [u8; 32];
+    type Key = [u8; 32];
 }
 
-impl DigestAlgorithm for Sha384 {
+impl MacAlgorithm for Sha384 {
     const OUTPUT_BITS: usize = 384;
-    type DigestOutput = Digest48; // Use Digest48 for 384 bits
+    type MacOutput = Digest48; // Use Digest48 for 384 bits
+    type Key = [u8; 48];
 }
 
-impl DigestAlgorithm for Sha512 {
+impl MacAlgorithm for Sha512 {
     const OUTPUT_BITS: usize = 512;
-    type DigestOutput = Digest64; // Use Digest64 for 512 bits
+    type MacOutput = Digest64; // Use Digest64 for 512 bits
+    type Key = [u8; 64];
 }
 
 impl Default for Sha256 {
@@ -348,7 +367,6 @@ impl Default for Sha384 {
 impl Default for Sha512 {
     fn default() -> Self { Sha512 }
 }
-
 
 impl IntoHashAlgo for Sha256 {
     fn to_hash_algo() -> HashAlgo {
@@ -374,12 +392,12 @@ pub struct Controller<'ctrl> {
     aspeed_hash_ctx: *mut AspeedHashContext,
 }
 
-impl <'ctrl> Controller<'ctrl> {
+impl<'ctrl> Controller<'ctrl> {
     pub fn new(hace: &'ctrl Hace) -> Self {
         Self {
             hace,
             algo: HashAlgo::SHA256,
-            aspeed_hash_ctx: core::ptr::addr_of_mut!(HASH_CTX),
+            aspeed_hash_ctx: core::ptr::addr_of_mut!(HMAC_CTX),
         }
     }
 }
@@ -394,8 +412,7 @@ impl Controller<'_> {
         unsafe { &mut *self.aspeed_hash_ctx }
     }
 
-    fn start_hash_operation(&mut self, _len: u32) {
-        self.hace.hace1c().write(|w| w.hash_intflag().set_bit());
+    fn start_hash_operation(&mut self, len: u32) {
         let ctx = self.ctx_mut();
 
         let src_addr = if (ctx.method & HACE_SG_EN) != 0 {
@@ -412,7 +429,7 @@ impl Controller<'_> {
             self.hace.hace20().write(|w| w.bits(src_addr));
             self.hace.hace24().write(|w| w.bits(digest_addr));
             self.hace.hace28().write(|w| w.bits(digest_addr));
-            self.hace.hace2c().write(|w| w.bits(_len));
+            self.hace.hace2c().write(|w| w.bits(len));
             self.hace.hace30().write(|w| w.bits(method));
             // blocking wait until hash engine ready
             while self.hace.hace1c().read().hash_intflag().bit_is_clear() {
@@ -428,6 +445,30 @@ impl Controller<'_> {
             unsafe { core::slice::from_raw_parts(iv.as_ptr() as *const u8, iv.len() * 4) };
 
         self.ctx_mut().digest[..iv_bytes.len()].copy_from_slice(iv_bytes);
+    }
+
+    fn hash_key(&mut self, key: &impl AsRef<[u8]>) {
+        let key_bytes = key.as_ref();
+        let key_len = key_bytes.len();
+        let digest_len = self.algo.digest_size();
+
+        self.ctx_mut().digcnt[0] = key_len as u64;
+        self.ctx_mut().bufcnt = key_len as u32;
+        self.ctx_mut().buffer[..key_len].copy_from_slice(key_bytes);
+        self.ctx_mut().method &= !HACE_SG_EN; // Disable SG mode for key hashing
+        self.copy_iv_to_digest();
+        self.fill_padding(0);
+        let bufcnt = self.ctx_mut().bufcnt;
+        self.start_hash_operation(bufcnt as u32);
+
+        let slice = unsafe {
+            core::slice::from_raw_parts(self.ctx_mut().digest.as_ptr(), digest_len)
+        };
+
+        self.ctx_mut().key[..digest_len].copy_from_slice(slice);
+        self.ctx_mut().ipad[..digest_len].copy_from_slice(slice);
+        self.ctx_mut().opad[..digest_len].copy_from_slice(slice);
+        self.ctx_mut().key_len = digest_len as u32;
     }
 
     fn fill_padding(&mut self, remaining: usize) {
@@ -470,21 +511,41 @@ impl Controller<'_> {
 }
 
 
-impl<'ctrl, A> DigestInit<A> for Controller<'ctrl>
+impl<'ctrl, A> MacInit<A> for Controller<'ctrl>
 where
-    A: DigestAlgorithm + IntoHashAlgo,
-    A::DigestOutput: Default + AsMut<[u8]>,
+    A: MacAlgorithm + IntoHashAlgo,
+    A::MacOutput: Default + AsMut<[u8]>,
+    A::Key: AsRef<[u8]>,
 {
     type OpContext<'a> = OpContextImpl<'a, 'ctrl, A> where Self: 'a; // Define your OpContext type here
 
-    fn init<'a>(&'a mut self, _algo: A) -> Result<Self::OpContext<'a>, Self::Error> {
+    fn init<'a>(&'a mut self, _algo: A, key: &A::Key) -> Result<Self::OpContext<'a>, Self::Error> {
         self.algo = A::to_hash_algo();
         self.ctx_mut().method = self.algo.hash_cmd();
         self.copy_iv_to_digest();
         self.ctx_mut().block_size = self.algo.block_size() as u32;
         self.ctx_mut().bufcnt = 0;
         self.ctx_mut().digcnt = [0; 2];
+        self.ctx_mut().buffer.fill(0);
+        self.ctx_mut().digest.fill(0);
+        self.ctx_mut().ipad.fill(0);
+        self.ctx_mut().opad.fill(0);
+        self.ctx_mut().key.fill(0);
 
+        if key.as_ref().len() > self.ctx_mut().key.len() {
+            // hash key if it is too long
+            self.hash_key(key);
+        } else {
+            self.ctx_mut().key[..key.as_ref().len()].copy_from_slice(key.as_ref());
+            self.ctx_mut().ipad[..key.as_ref().len()].copy_from_slice(key.as_ref());
+            self.ctx_mut().opad[..key.as_ref().len()].copy_from_slice(key.as_ref());
+            self.ctx_mut().key_len = key.as_ref().len() as u32;
+        }
+
+        for i in 0..self.ctx_mut().block_size as usize {
+            self.ctx_mut().ipad[i] ^= 0x36;
+            self.ctx_mut().opad[i] ^= 0x5c;
+        }
 
         Ok(OpContextImpl {
             controller: self,
@@ -493,96 +554,82 @@ where
     }
 }
 
-pub struct OpContextImpl<'a, 'ctrl, A: DigestAlgorithm + IntoHashAlgo> {
+pub struct OpContextImpl<'a, 'ctrl, A: MacAlgorithm + IntoHashAlgo> {
     pub controller: &'a mut Controller<'ctrl>,
     _phantom: core::marker::PhantomData<A>,
 }
 
-impl<'a, 'ctrl, A> proposed_traits::digest::ErrorType for OpContextImpl<'a, 'ctrl, A>
+impl<'a, 'ctrl, A> ErrorType for OpContextImpl<'a, 'ctrl, A>
 where
-    A: DigestAlgorithm + IntoHashAlgo,
+    A: MacAlgorithm + IntoHashAlgo,
 {
     type Error = Infallible;
 }
 
-impl<'a, 'ctrl, A> DigestOp for OpContextImpl<'a, 'ctrl, A>
+impl<'a, 'ctrl, A> MacOp for OpContextImpl<'a, 'ctrl, A>
 where
-    A: DigestAlgorithm + IntoHashAlgo,
-    A::DigestOutput: Default + AsMut<[u8]>
+    A: MacAlgorithm + IntoHashAlgo,
+    A::MacOutput: Default + AsMut<[u8]>
 {
-    type Output = A::DigestOutput;
+    type Output = A::MacOutput;
 
-    fn update(&mut self, _input: &[u8]) -> Result<(), Self::Error> {
-        let input_len = _input.len() as u32;
-        let (new_len, carry) = self.controller.ctx_mut().digcnt[0].overflowing_add(input_len as u64);
+    fn update(&mut self, input: &[u8]) -> Result<(), Self::Error> {
+        let ctrl = &mut self.controller;
+        let algo = ctrl.algo;
+        let block_size = algo.block_size();
+        let digest_size = algo.digest_size();
+        let mut bufcnt: u32;
 
-        self.controller.ctx_mut().digcnt[0] = new_len;
-        if carry {
-            self.controller.ctx_mut().digcnt[1] += 1;
+        {
+            let ctx = ctrl.ctx_mut();
+            ctx.digcnt[0] = block_size as u64;
+            ctx.bufcnt = block_size as u32;
+
+            // H(ipad + input)
+            let ipad = &ctx.ipad[..block_size];
+            ctx.buffer[..algo.block_size()].copy_from_slice(ipad);
+            ctx.buffer[algo.block_size()..(algo.block_size() + input.len())].copy_from_slice(input);
+            ctx.digcnt[0] += input.len() as u64;
+            ctx.bufcnt += input.len() as u32;
+            ctx.method &= !HACE_SG_EN; // Disable SG mode for key hashing
         }
 
-        let start = self.controller.ctx_mut().bufcnt as usize;
-        let end = start + input_len as usize;
-        if self.controller.ctx_mut().bufcnt + input_len < self.controller.ctx_mut().block_size {
-            self.controller.ctx_mut().buffer[start..end].copy_from_slice(_input);
-            self.controller.ctx_mut().bufcnt += input_len;
-            return Ok(());
+        ctrl.fill_padding(0);
+        bufcnt = ctrl.ctx_mut().bufcnt;
+        ctrl.copy_iv_to_digest();
+        ctrl.start_hash_operation(bufcnt);
+        let slice = unsafe {
+            core::slice::from_raw_parts(ctrl.ctx_mut().digest.as_ptr(), digest_size)
+        };
+
+        // H(opad + H(opad + hash sum))
+        {
+            let ctx = ctrl.ctx_mut();
+            ctx.digcnt[0] = block_size as u64 + digest_size as u64;
+            ctx.bufcnt = block_size as u32 + digest_size as u32;
+            ctx.buffer[..block_size].copy_from_slice(&ctx.opad[..block_size]);
+            ctx.buffer[block_size..(block_size + digest_size)]
+                .copy_from_slice(slice);
         }
+        ctrl.fill_padding(0);
+        bufcnt = ctrl.ctx_mut().bufcnt;
+        ctrl.copy_iv_to_digest();
+        ctrl.start_hash_operation(bufcnt);
 
-        let remaining = (input_len + self.controller.ctx_mut().bufcnt) % self.controller.ctx_mut().block_size;
-        let total_len = (input_len + self.controller.ctx_mut().bufcnt) - remaining;
-        let mut i = 0;
-
-        if self.controller.ctx_mut().bufcnt != 0 {
-            self.controller.ctx_mut().sg[0].addr = self.controller.ctx_mut().buffer.as_ptr() as u32;
-            self.controller.ctx_mut().sg[0].len = self.controller.ctx_mut().bufcnt;
-            if total_len == self.controller.ctx_mut().bufcnt {
-                self.controller.ctx_mut().sg[0].addr = _input.as_ptr() as u32;
-                self.controller.ctx_mut().sg[0].len |= HACE_SG_LAST;
-            }
-            i += 1;
-        }
-
-        if total_len != self.controller.ctx_mut().bufcnt {
-            self.controller.ctx_mut().sg[i].addr = _input.as_ptr() as u32;
-            self.controller.ctx_mut().sg[i].len = (total_len - self.controller.ctx_mut().bufcnt) | HACE_SG_LAST;
-        }
-
-        self.controller.start_hash_operation(total_len);
-
-        if remaining != 0 {
-            let src_start = (total_len - self.controller.ctx_mut().bufcnt) as usize;
-            let src_end = src_start + remaining as usize;
-
-            self.controller.ctx_mut().buffer[..(remaining as usize)]
-                .copy_from_slice(&_input[src_start..src_end]);
-            self.controller.ctx_mut().bufcnt = remaining as u32;
-        }
         Ok(())
     }
 
-
     fn finalize(self) -> Result<Self::Output, Self::Error> {
-        self.controller.fill_padding(0);
-        let digest_len = self.controller.algo.digest_size();
+        let digest_size = self.controller.algo.digest_size();
+        let ctx = self.controller.ctx_mut();
 
-        let (digest_ptr, bufcnt) = {
-            let ctx = self.controller.ctx_mut();
 
-            ctx.sg[0].addr = ctx.buffer.as_ptr() as u32;
-            ctx.sg[0].len = ctx.bufcnt | HACE_SG_LAST;
-
-            (ctx.digest.as_ptr(), ctx.bufcnt)
+        let slice = unsafe {
+            core::slice::from_raw_parts(ctx.digest.as_ptr(), digest_size)
         };
 
-        self.controller.start_hash_operation(bufcnt);
-
-    let slice = unsafe {
-        core::slice::from_raw_parts(digest_ptr, digest_len)
-    };
-
-    let mut output = A::DigestOutput::default();
-    output.as_mut()[..digest_len].copy_from_slice(slice);
+        let mut output = A::MacOutput::default();
+        output.as_mut()[..digest_size].copy_from_slice(slice);
 
         let ctx = self.controller.ctx_mut();
         ctx.bufcnt = 0;
