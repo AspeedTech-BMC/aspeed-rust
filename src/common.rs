@@ -1,7 +1,4 @@
 
-use embedded_hal::delay::DelayNs;
-
-
 pub struct DummyDelay;
 
 impl embedded_hal::delay::DelayNs for DummyDelay {
@@ -13,7 +10,6 @@ impl embedded_hal::delay::DelayNs for DummyDelay {
 }
 
 #[repr(align(32))]
-#[link_section = ".ram_nc"] //non-cacheable memory
 pub struct DmaBuffer<const N: usize> {
     pub buf: [u8; N],
 }
@@ -35,8 +31,8 @@ impl<const N: usize> DmaBuffer<N> {
         N
     }
 
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buf
+    pub fn as_slice(&self, start: usize, end: usize) -> &[u8] {
+        &self.buf[start..end]
     }
 
     pub fn as_mut_slice(&mut self, start:usize, end:usize) -> &mut [u8] {
