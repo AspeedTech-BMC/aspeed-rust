@@ -282,7 +282,7 @@ static mut SDMA_BUFFER: [DmaBuffer<I2C_SLAVE_BUF_SIZE>;I2C_TOTAL] = [
 
 static mut I2C_BUF:[[u8;I2C_SLAVE_BUF_SIZE];4] = [[0; 256]; I2C_TOTAL];
 
-pub struct I2cData<'a> {
+pub struct I2cData<'a, I2CT: I2CTarget> {
     pub msg: I2cMsg<'a>,
     pub addr: u8,
     pub stop: bool,
@@ -295,10 +295,10 @@ pub struct I2cData<'a> {
     pub slave_operate: u8,
 	pub slave_addr_last: u8,
     pub slave_target_addr: u8,
-    pub slave_target: Option<&'a mut dyn I2CTarget<Error = Error>>,
+    pub slave_target: Option<&'a mut I2CT>,
 }
 
-impl<'a> I2cData<'a> {
+impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
     pub fn new(buf_idx: usize) -> Self {
         assert!(buf_idx <I2C_TOTAL); // Prevent out-of-bounds access
         unsafe {
@@ -324,23 +324,23 @@ impl<'a> I2cData<'a> {
             }
         }
     }
-    pub fn set_target(&mut self, addr: u8, target: Option<&'a mut dyn I2CTarget<Error = Error>>) {
+    pub fn set_target(&mut self, addr: u8, target: Option<&'a mut I2CT>) {
         self.slave_target_addr = addr;
         self.slave_target = target;
     }
 }
 
-impl<I2C: Instance> embedded_hal::i2c::ErrorType for I2cController<'_,I2C> {
+impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for I2cController<'_,I2C,I2CT> {
     type Error = Error;
 }
 /// I2C abstraction
-pub struct I2cController<'a, I2C: Instance> {
+pub struct I2cController<'a, I2C: Instance, I2CT: I2CTarget> {
     pub i2c: &'static ast1060_pac::i2c::RegisterBlock,
     pub i2c_buff: &'static ast1060_pac::i2cbuff::RegisterBlock,
     pub config: I2cConfig,
     pub mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE>,
     pub sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE>,
-    pub i2c_data: I2cData<'a>,
+    pub i2c_data: I2cData<'a, I2CT>,
     _marker: PhantomData<I2C>,
     pub dbg_uart: Option<&'a mut UartController<'a>>,
 }
@@ -352,7 +352,7 @@ macro_rules! dbg {
         }
     };
 }
-impl<'a, I2C: Instance> I2cController<'a, I2C> {
+impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     pub fn new(i2c: I2C, config: I2cConfig, uart: Option<&'a mut UartController<'a>>) -> Self {
         let i2c = unsafe { &*I2C::ptr() };
         let i2c_buff = unsafe { &*I2C::buff_ptr() };
@@ -1175,7 +1175,7 @@ impl<'a, I2C: Instance> I2cController<'a, I2C> {
     pub fn i2c_aspeed_slave_register(
         &mut self,
         target_addr: u8,			     
-        target: Option<&'a mut dyn I2CTarget<Error = Error>>,
+        target: Option<&'a mut I2CT>,
     ) -> Result<(), Error> {
 	    let mut cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
 
@@ -1860,7 +1860,7 @@ impl<'a, I2C: Instance> I2cController<'a, I2C> {
     }
 }
 
-impl<I2C: Instance> embedded_hal::i2c::I2c for I2cController<'_,I2C> {
+impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::I2c for I2cController<'_,I2C,I2CT> {
     fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error> {
         self.read(addr, buffer)
     }

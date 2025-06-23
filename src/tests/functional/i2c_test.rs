@@ -4,7 +4,75 @@ use crate::common::DummyDelay;
 use crate::i2c::{self, I2cController};
 use ast1060_pac::Peripherals;
 use embedded_hal::delay::DelayNs;
+use embedded_hal::i2c::ErrorKind;
 use embedded_io::Write;
+use proposed_traits::i2c_target::{I2CCoreTarget, ReadTarget, RegisterAccess, WriteReadTarget, WriteTarget};
+
+#[derive(Debug)]
+pub enum DummyI2CError {
+    OtherError,
+}
+
+impl embedded_hal::i2c::Error for DummyI2CError {
+    fn kind(&self) -> ErrorKind {
+        match *self {
+            _ => ErrorKind::Other,
+        }
+    }
+}
+
+impl embedded_hal::i2c::ErrorType for DummyI2CTarget {
+    type Error = DummyI2CError;
+}
+
+struct DummyI2CTarget {
+    address: u8,
+    buffer: [u8;16],
+}
+
+impl I2CCoreTarget for DummyI2CTarget {
+    fn init(&mut self, address: u8) -> Result<(), Self::Error> {
+        if address == 0 {
+            return Err(DummyI2CError::OtherError);
+        }
+        self.address = address;
+        Ok(())
+    }
+    fn on_transaction_start(&mut self, repeated: bool) {}
+    fn on_stop(&mut self){}
+    fn on_address_match(&mut self, address: u8) -> bool {
+        self.address == address
+    }
+}
+
+impl ReadTarget for DummyI2CTarget {
+    fn on_read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        for i in 0..buffer.len() {
+            buffer[i] = self.buffer[i];
+        }
+        Ok(())
+    }
+}
+
+impl WriteTarget for DummyI2CTarget {
+    fn on_write(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        for i in 0..data.len() {
+            self.buffer[i] = data[i];
+        }
+        Ok(())
+    }
+}
+
+impl WriteReadTarget for DummyI2CTarget{}
+
+impl RegisterAccess for DummyI2CTarget {
+    fn write_register(&mut self, address: u8, data: u8) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn read_register(&mut self, address: u8, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        Ok((1))
+    }
+}
 
 pub fn test_i2c_master(uart:&mut UartController<'_>) {
     let _peripherals = unsafe { Peripherals::steal() };
@@ -21,7 +89,7 @@ pub fn test_i2c_master(uart:&mut UartController<'_>) {
             clock: 24_000_000,
         });
     }    
-    let mut i2c1 = I2cController::new(_peripherals.i2c1, i2c::I2cConfig{
+    let mut i2c1: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c1, i2c::I2cConfig{
         xfer_mode: i2c::I2cXferMode::DmaMode,
         multi_master: true,
         smbus_timeout: true,
@@ -103,7 +171,7 @@ pub fn test_i2c_slave(uart:&mut UartController<'_>) {
         });
     }
     //i2c2 as slave
-    let mut i2c2 = I2cController::new(_peripherals.i2c2, i2c::I2cConfig{
+    let mut i2c2: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c2, i2c::I2cConfig{
         xfer_mode: i2c::I2cXferMode::DmaMode,
         multi_master: true,
         smbus_timeout: true,
