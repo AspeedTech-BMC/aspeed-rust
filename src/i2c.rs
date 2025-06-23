@@ -1,13 +1,13 @@
+use crate::common::{DmaBuffer, DummyDelay};
+use crate::uart::UartController;
+use ast1060_pac::{I2cbuff, I2cglobal, Scu};
 use core::cmp::min;
-use core::sync::atomic::{AtomicBool, Ordering};
-use ast1060_pac::{Scu, I2cglobal, I2cbuff};
-use embedded_hal::i2c::{NoAcknowledgeSource, Operation, SevenBitAddress};
-use embedded_hal::delay::DelayNs;
 use core::marker::PhantomData;
+use core::sync::atomic::{AtomicBool, Ordering};
+use embedded_hal::delay::DelayNs;
+use embedded_hal::i2c::{NoAcknowledgeSource, Operation, SevenBitAddress};
 use embedded_io::Write;
 use proposed_traits::i2c_target::I2CTarget;
-use crate::common::{DummyDelay, DmaBuffer};
-use crate::uart::UartController;
 
 static I2CGLOBAL_INIT: AtomicBool = AtomicBool::new(false);
 
@@ -29,26 +29,26 @@ pub enum I2cXferMode {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum I2cSEvent {
-	SlaveRdReq,
-	SlaveWrReq,
-	SlaveRdProc,
-	SlaveWrRecvd,
-	SlaveStop,
+    SlaveRdReq,
+    SlaveWrReq,
+    SlaveRdProc,
+    SlaveWrRecvd,
+    SlaveStop,
 }
 
 pub trait Instance {
-    fn ptr() -> *const ast1060_pac::i2c::RegisterBlock; 
-    fn buff_ptr () -> *const ast1060_pac::i2cbuff::RegisterBlock; 
+    fn ptr() -> *const ast1060_pac::i2c::RegisterBlock;
+    fn buff_ptr() -> *const ast1060_pac::i2cbuff::RegisterBlock;
     const BUS_NUM: u8;
 }
 
-macro_rules!  macro_i2c {
+macro_rules! macro_i2c {
     ($I2cx: ident, $I2cbuffx: ident, $x: literal) => {
         impl Instance for ast1060_pac::$I2cx {
             fn ptr() -> *const ast1060_pac::i2c::RegisterBlock {
                 ast1060_pac::$I2cx::ptr()
             }
-            fn buff_ptr () -> *const ast1060_pac::i2cbuff::RegisterBlock{
+            fn buff_ptr() -> *const ast1060_pac::i2cbuff::RegisterBlock {
                 ast1060_pac::$I2cbuffx::ptr()
             }
             const BUS_NUM: u8 = $x;
@@ -70,116 +70,114 @@ macro_i2c!(I2c11, I2cbuff11, 11);
 macro_i2c!(I2c12, I2cbuff12, 12);
 macro_i2c!(I2c13, I2cbuff13, 13);
 
-const HPLL_FREQ                 : u32 = 1_000_000_000;
+const HPLL_FREQ: u32 = 1_000_000_000;
 
-const AST_I2CC_SLAVE_EN         : u32 = 1<<1;
+const AST_I2CC_SLAVE_EN: u32 = 1 << 1;
 
-const AST_I2CM_PKT_EN			: u32 = 1<<16;
-const AST_I2CM_SDA_OE_OUT_DIR	: u32 =	1<<15;
-const AST_I2CM_SDA_O_OUT_DIR	: u32 =	1<<14;
-const AST_I2CM_SCL_OE_OUT_DIR	: u32 =	1<<13;
-const AST_I2CM_SCL_O_OUT_DIR	: u32 =	1<<12;
-const AST_I2CM_RECOVER_CMD_EN	: u32 =	1<<11;
+const AST_I2CM_PKT_EN: u32 = 1 << 16;
+const AST_I2CM_SDA_OE_OUT_DIR: u32 = 1 << 15;
+const AST_I2CM_SDA_O_OUT_DIR: u32 = 1 << 14;
+const AST_I2CM_SCL_OE_OUT_DIR: u32 = 1 << 13;
+const AST_I2CM_SCL_O_OUT_DIR: u32 = 1 << 12;
+const AST_I2CM_RECOVER_CMD_EN: u32 = 1 << 11;
 
-const AST_I2CM_RX_DMA_EN		:u32 = 1<<9;
-const AST_I2CM_TX_DMA_EN		:u32 = 1<<8;
+const AST_I2CM_RX_DMA_EN: u32 = 1 << 9;
+const AST_I2CM_TX_DMA_EN: u32 = 1 << 8;
 
-// Command Bit 
-const AST_I2CM_RX_BUFF_EN		:u32 = 1<<7;
-const AST_I2CM_TX_BUFF_EN		:u32 = 1<<6;
-const AST_I2CM_STOP_CMD			:u32 = 1<<5;
-const AST_I2CM_RX_CMD_LAST		:u32 = 1<<4;
-const AST_I2CM_RX_CMD			:u32 = 1<<3;
-const AST_I2CM_TX_CMD			:u32 = 1<<1;
-const AST_I2CM_START_CMD		:u32 = 1<<0;
+// Command Bit
+const AST_I2CM_RX_BUFF_EN: u32 = 1 << 7;
+const AST_I2CM_TX_BUFF_EN: u32 = 1 << 6;
+const AST_I2CM_STOP_CMD: u32 = 1 << 5;
+const AST_I2CM_RX_CMD_LAST: u32 = 1 << 4;
+const AST_I2CM_RX_CMD: u32 = 1 << 3;
+const AST_I2CM_TX_CMD: u32 = 1 << 1;
+const AST_I2CM_START_CMD: u32 = 1 << 0;
 //status bit
-const AST_I2CM_SCL_LOW_TO		:u32 = 1<<6;
-const AST_I2CM_ABNORMAL			:u32 = 1<<5;
-const AST_I2CM_NORMAL_STOP		:u32 = 1<<4;
-const AST_I2CM_ARBIT_LOSS		:u32 = 1<<3;
-const AST_I2CM_RX_DONE			:u32 = 1<<2;
-const AST_I2CM_TX_NAK			:u32 = 1<<1;
-const AST_I2CM_TX_ACK			:u32 = 1<<0; 
+const AST_I2CM_SCL_LOW_TO: u32 = 1 << 6;
+const AST_I2CM_ABNORMAL: u32 = 1 << 5;
+const AST_I2CM_NORMAL_STOP: u32 = 1 << 4;
+const AST_I2CM_ARBIT_LOSS: u32 = 1 << 3;
+const AST_I2CM_RX_DONE: u32 = 1 << 2;
+const AST_I2CM_TX_NAK: u32 = 1 << 1;
+const AST_I2CM_TX_ACK: u32 = 1 << 0;
 
 fn ast_i2cm_pkt_addr(x: u8) -> u32 {
     ((x & 0x7F) as u32) << 24
 }
 
+//0x08 : I2CC Master/Slave Transmit/Receive Byte Buffer Register
+const AST_I2CC_STS_AND_BUFF: u32 = 0x08;
+const AST_I2CC_TX_DIR_MASK: u32 = 0x7 << 29;
+const AST_I2CC_SDA_OE: u32 = 1 << 28;
+const AST_I2CC_SDA_O: u32 = 1 << 27;
+const AST_I2CC_SCL_OE: u32 = 1 << 26;
+const AST_I2CC_SCL_O: u32 = 1 << 25;
 
-//0x08 : I2CC Master/Slave Transmit/Receive Byte Buffer Register 
-const AST_I2CC_STS_AND_BUFF		:u32 = 0x08;
-const AST_I2CC_TX_DIR_MASK		:u32 = 0x7 << 29;
-const AST_I2CC_SDA_OE			:u32 = 1<<28;
-const AST_I2CC_SDA_O			:u32 = 1<<27;
-const AST_I2CC_SCL_OE			:u32 = 1<<26;
-const AST_I2CC_SCL_O			:u32 = 1<<25;
+// 0x28 : I2CS Slave CMD/Status Register
+const AST_I2CS_CMD_STS: u32 = 0x28;
+const AST_I2CS_ACTIVE_ALL: u32 = 0x3 << 17;
+const AST_I2CS_PKT_MODE_EN: u32 = 1 << 16;
+const AST_I2CS_AUTO_NAK_NOADDR: u32 = 1 << 15;
+const AST_I2CS_AUTO_NAK_EN: u32 = 1 << 14;
+const AST_I2CM_PKT_TIMEOUT: u32 = 1 << 18;
+const AST_I2CM_PKT_ERROR: u32 = 1 << 17;
+const AST_I2CM_PKT_DONE: u32 = 1 << 16;
+const AST_I2CM_BUS_RECOVER_FAIL: u32 = 1 << 15;
+const AST_I2CM_SDA_DL_TO: u32 = 1 << 14;
+const AST_I2CM_BUS_RECOVER: u32 = 1 << 13;
+const AST_I2CM_SMBUS_ALT: u32 = 1 << 12;
 
-// 0x28 : I2CS Slave CMD/Status Register   
-const AST_I2CS_CMD_STS		    :u32 = 0x28;
-const AST_I2CS_ACTIVE_ALL		:u32 = 0x3 << 17;
-const AST_I2CS_PKT_MODE_EN		:u32 = 1<<16;
-const AST_I2CS_AUTO_NAK_NOADDR	:u32 = 1<<15;
-const AST_I2CS_AUTO_NAK_EN		:u32 = 1<<14;
-const AST_I2CM_PKT_TIMEOUT		:u32 = 1<<18;
-const AST_I2CM_PKT_ERROR		:u32 = 1<<17;
-const AST_I2CM_PKT_DONE			:u32 = 1<<16;
-const AST_I2CM_BUS_RECOVER_FAIL	:u32 = 1<<15;
-const AST_I2CM_SDA_DL_TO		:u32 = 1<<14;
-const AST_I2CM_BUS_RECOVER		:u32 = 1<<13;
-const AST_I2CM_SMBUS_ALT		:u32 = 1<<12;
+const ASPEED_I2C_DMA_SIZE: usize = 4096;
+const SLAVE_TRIGGER_CMD: u32 = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
+const I2C_SLAVE_BUF_SIZE: usize = 256;
 
-const ASPEED_I2C_DMA_SIZE		:usize = 4096;
-const SLAVE_TRIGGER_CMD		:u32 = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
-const I2C_SLAVE_BUF_SIZE	:usize = 256;
-
-const I2C_BUF_SIZE			:u8 = 0x20;
+const I2C_BUF_SIZE: u8 = 0x20;
 
 //slave
-const AST_I2CS_ALT_EN		: u32 = 1 << 10;
-const AST_I2CS_RX_DMA_EN	:u32 = 1<<9;
-const AST_I2CS_TX_DMA_EN	:u32 = 1<<8;
-const AST_I2CS_RX_BUFF_EN	:u32 = 1<<7;
-const AST_I2CS_TX_BUFF_EN	:u32 = 1<<6;
-const AST_I2CS_RX_CMD_LAST	:u32 = 1<<4;
+const AST_I2CS_ALT_EN: u32 = 1 << 10;
+const AST_I2CS_RX_DMA_EN: u32 = 1 << 9;
+const AST_I2CS_TX_DMA_EN: u32 = 1 << 8;
+const AST_I2CS_RX_BUFF_EN: u32 = 1 << 7;
+const AST_I2CS_TX_BUFF_EN: u32 = 1 << 6;
+const AST_I2CS_RX_CMD_LAST: u32 = 1 << 4;
 
-const AST_I2CS_SLAVE_PENDING :u32 = 1<<29;
-const AST_I2CS_WAIT_TX_DMA	:u32 = 1<<25;
-const AST_I2CS_WAIT_RX_DMA	:u32 = 1<<24;
+const AST_I2CS_SLAVE_PENDING: u32 = 1 << 29;
+const AST_I2CS_WAIT_TX_DMA: u32 = 1 << 25;
+const AST_I2CS_WAIT_RX_DMA: u32 = 1 << 24;
 
-const AST_I2CS_ADDR_INDICATE_MASK   :u32 = 3<<30;
-const AST_I2CS_ADDR3_NAK			:u32 = 1<<22;
-const AST_I2CS_ADDR2_NAK			:u32 = 1<<21;
-const AST_I2CS_ADDR1_NAK			:u32 = 1<<20;
+const AST_I2CS_ADDR_INDICATE_MASK: u32 = 3 << 30;
+const AST_I2CS_ADDR3_NAK: u32 = 1 << 22;
+const AST_I2CS_ADDR2_NAK: u32 = 1 << 21;
+const AST_I2CS_ADDR1_NAK: u32 = 1 << 20;
 
-const AST_I2CS_ADDR_MASK	:u32 = 3<<18;
-const AST_I2CS_PKT_ERROR	:u32 = 1<<17;
-const AST_I2CS_PKT_DONE		:u32 = 1<<16;
-const AST_I2CS_INACTIVE_TO	:u32 = 1<<15;
-const AST_I2CS_SLAVE_MATCH	:u32 = 1<<7;
-const AST_I2CS_ABNOR_STOP	:u32 = 1<<5;
-const AST_I2CS_STOP			:u32 = 1<<4;
-const AST_I2CS_RX_DONE_NAK	:u32 = 1<<3;
-const AST_I2CS_RX_DONE		:u32 = 1<<2;
-const AST_I2CS_TX_NAK		:u32 = 1<<1;
-const AST_I2CS_TX_ACK		:u32 = 1<<0;
+const AST_I2CS_ADDR_MASK: u32 = 3 << 18;
+const AST_I2CS_PKT_ERROR: u32 = 1 << 17;
+const AST_I2CS_PKT_DONE: u32 = 1 << 16;
+const AST_I2CS_INACTIVE_TO: u32 = 1 << 15;
+const AST_I2CS_SLAVE_MATCH: u32 = 1 << 7;
+const AST_I2CS_ABNOR_STOP: u32 = 1 << 5;
+const AST_I2CS_STOP: u32 = 1 << 4;
+const AST_I2CS_RX_DONE_NAK: u32 = 1 << 3;
+const AST_I2CS_RX_DONE: u32 = 1 << 2;
+const AST_I2CS_TX_NAK: u32 = 1 << 1;
+const AST_I2CS_TX_ACK: u32 = 1 << 0;
 
-const AST_I2CS_TX_CMD		:u32 = 1<<2;
+const AST_I2CS_TX_CMD: u32 = 1 << 2;
 
 const AST_I2CC_AC_TIMING_MASK: u32 = 0x00ff_ffff;
-const I2C_TIMEOUT_COUNT		:u8 = 0x8; //~35ms
+const I2C_TIMEOUT_COUNT: u8 = 0x8; //~35ms
 
 //message flag
-//Write message to I2C bus. 
-const I2C_MSG_WRITE			:u8 = 0;
+//Write message to I2C bus.
+const I2C_MSG_WRITE: u8 = 0;
 //Read message from I2C bus. */
-const I2C_MSG_READ			:u8 = 1<<0; 
+const I2C_MSG_READ: u8 = 1 << 0;
 //Send STOP after this message. */
-const I2C_MSG_STOP			:u8 = 1<<1;
+const I2C_MSG_STOP: u8 = 1 << 1;
 //RESTART I2C transaction for this message.
-const I2C_MSG_RESTART		:u8 = 1<<2;	
+const I2C_MSG_RESTART: u8 = 1 << 2;
 
-
-const AST2600_I2CM_ISR_MASK  :u32 = 0xFFE00000;
+const AST2600_I2CM_ISR_MASK: u32 = 0xFFE00000;
 
 pub struct I2cMsg<'a> {
     pub buf: &'a mut [u8],
@@ -197,7 +195,7 @@ impl<'a> I2cMsg<'a> {
 #[repr(u8)]
 pub enum CmdErr {
     NoErr = 0,
-	ErrBusRecovery = 1,
+    ErrBusRecovery = 1,
     ErrProt = 2,
     ErrTimeout = 3,
     ErrBusy = 4,
@@ -254,33 +252,32 @@ impl embedded_hal::i2c::Error for Error {
 pub struct I2cConfig {
     pub xfer_mode: I2cXferMode,
     pub multi_master: bool,
-	pub smbus_timeout: bool,
-	pub manual_scl_high: u8,
-	pub manual_scl_low: u8,
-	pub manual_sda_hold: u8,
-	pub smbus_alert: bool,
-	pub clk_src: u32,
+    pub smbus_timeout: bool,
+    pub manual_scl_high: u8,
+    pub manual_scl_low: u8,
+    pub manual_sda_hold: u8,
+    pub smbus_alert: bool,
+    pub clk_src: u32,
     pub mode: Mode,
 }
 
-
 const I2C_TOTAL: usize = 4;
 #[link_section = ".ram_nc"]
-static mut MDMA_BUFFER: [DmaBuffer<ASPEED_I2C_DMA_SIZE>;I2C_TOTAL] = [
+static mut MDMA_BUFFER: [DmaBuffer<ASPEED_I2C_DMA_SIZE>; I2C_TOTAL] = [
     DmaBuffer::new(),
     DmaBuffer::new(),
     DmaBuffer::new(),
     DmaBuffer::new(),
 ];
 #[link_section = ".ram_nc"]
-static mut SDMA_BUFFER: [DmaBuffer<I2C_SLAVE_BUF_SIZE>;I2C_TOTAL] = [
+static mut SDMA_BUFFER: [DmaBuffer<I2C_SLAVE_BUF_SIZE>; I2C_TOTAL] = [
     DmaBuffer::new(),
     DmaBuffer::new(),
     DmaBuffer::new(),
     DmaBuffer::new(),
 ];
 
-static mut I2C_BUF:[[u8;I2C_SLAVE_BUF_SIZE];4] = [[0; 256]; I2C_TOTAL];
+static mut I2C_BUF: [[u8; I2C_SLAVE_BUF_SIZE]; 4] = [[0; 256]; I2C_TOTAL];
 
 pub struct I2cData<'a, I2CT: I2CTarget> {
     pub msg: I2cMsg<'a>,
@@ -293,22 +290,22 @@ pub struct I2cData<'a, I2CT: I2CTarget> {
     pub master_xfer_cnt: u32,
     pub slave_attached: bool,
     pub slave_operate: u8,
-	pub slave_addr_last: u8,
+    pub slave_addr_last: u8,
     pub slave_target_addr: u8,
     pub slave_target: Option<&'a mut I2CT>,
 }
 
 impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
     pub fn new(buf_idx: usize) -> Self {
-        assert!(buf_idx <I2C_TOTAL); // Prevent out-of-bounds access
+        assert!(buf_idx < I2C_TOTAL); // Prevent out-of-bounds access
         unsafe {
             let buf_ref: &'a mut [u8] = &mut I2C_BUF[buf_idx];
-             Self {
+            Self {
                 msg: I2cMsg {
-                        buf:buf_ref,
-                        flags: 0,
-                        length: 0,
-                    },
+                    buf: buf_ref,
+                    flags: 0,
+                    length: 0,
+                },
                 addr: 0,
                 stop: false,
                 alert_enable: false,
@@ -330,7 +327,7 @@ impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
     }
 }
 
-impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for I2cController<'_,I2C,I2CT> {
+impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for I2cController<'_, I2C, I2CT> {
     type Error = Error;
 }
 /// I2C abstraction
@@ -357,24 +354,22 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let i2c = unsafe { &*I2C::ptr() };
         let i2c_buff = unsafe { &*I2C::buff_ptr() };
         let index: usize = I2C::BUS_NUM as usize;
-        let mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE> =
-            unsafe { &mut MDMA_BUFFER[index] };
-        let sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE> =
-            unsafe { &mut SDMA_BUFFER[index] };
+        let mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE> = unsafe { &mut MDMA_BUFFER[index] };
+        let sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE> = unsafe { &mut SDMA_BUFFER[index] };
         let i2c_data = I2cData::new(index);
         Self {
             i2c: i2c,
             i2c_buff: i2c_buff,
             config: config,
-            mdma_buf:mdma_buf,
-            sdma_buf:sdma_buf,
+            mdma_buf: mdma_buf,
+            sdma_buf: sdma_buf,
             i2c_data: i2c_data,
             _marker: PhantomData,
             dbg_uart: uart,
         }
     }
     pub fn dump_regs(&mut self) {
-        let i2cg = unsafe{ &*I2cglobal::ptr() };
+        let i2cg = unsafe { &*I2cglobal::ptr() };
         dbg!(self, "******* i2c registers ******");
         dbg!(self, "i2cg00 {:#x}", i2cg.i2cg00().read().bits());
         dbg!(self, "i2cg04 {:#x}", i2cg.i2cg04().read().bits());
@@ -412,113 +407,125 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
     pub fn i2c_init(&mut self) {
         dbg!(self, "i2c init");
-        dbg!(self, "mdma_buf {:p}, sdma_buf {:p}", self.mdma_buf.as_ptr(), self.sdma_buf.as_ptr());
-        let scu = unsafe{ &*Scu::ptr() };
+        dbg!(
+            self,
+            "mdma_buf {:p}, sdma_buf {:p}",
+            self.mdma_buf.as_ptr(),
+            self.sdma_buf.as_ptr()
+        );
+        let scu = unsafe { &*Scu::ptr() };
         // global init
-        if I2CGLOBAL_INIT.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        if I2CGLOBAL_INIT
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             dbg!(self, "i2c global init");
             scu.scu050().write(|w| w.rst_i2csmbus_ctrl().set_bit());
-            let mut delay = DummyDelay{};
+            let mut delay = DummyDelay {};
             delay.delay_ns(1_000_000); // 1ms delay
-            scu.scu054().write(|w| unsafe {
-                w.bits(0x4)
-            });
+            scu.scu054().write(|w| unsafe { w.bits(0x4) });
             delay.delay_ns(1_000_000); // 1ms delay
 
-            let i2cg = unsafe{ &*I2cglobal::ptr() };
-            i2cg.i2cg0c().write(|w| 
-                w.clk_divider_mode_sel().set_bit()
-                .reg_definition_sel().set_bit()
-                .select_the_action_when_slave_pkt_mode_rxbuf_empty().set_bit()
-            );
-            /*
-            * APB clk : 50Mhz
-            * div  : scl       : baseclk [APB/((div/2) + 1)] : tBuf [1/bclk * 16]
-            * I2CG10[31:24] base clk4 for i2c auto recovery timeout counter (0x62)
-            * I2CG10[23:16] base clk3 for Standard-mode (100Khz) min tBuf 4.7us
-            * 0x1d : 100.8Khz  : 3.225Mhz                    : 4.96us
-            * 0x1e : 97.66Khz  : 3.125Mhz                    : 5.12us
-            * 0x1f : 97.85Khz  : 3.03Mhz                     : 5.28us
-            * 0x20 : 98.04Khz  : 2.94Mhz                     : 5.44us
-            * 0x21 : 98.61Khz  : 2.857Mhz                    : 5.6us
-            * 0x22 : 99.21Khz  : 2.77Mhz                     : 5.76us (default)
-            * I2CG10[15:8] base clk2 for Fast-mode (400Khz) min tBuf 1.3us
-            * 0x08 : 400Khz    : 10Mhz                       : 1.6us
-            * I2CG10[7:0] base clk1 for Fast-mode Plus (1Mhz) min tBuf 0.5us
-            * 0x03 : 1Mhz      : 20Mhz                       : 0.8us
-            */
-            i2cg.i2cg10().write(|w| unsafe {
-                w.bits(0x62220803)
+            let i2cg = unsafe { &*I2cglobal::ptr() };
+            i2cg.i2cg0c().write(|w| {
+                w.clk_divider_mode_sel()
+                    .set_bit()
+                    .reg_definition_sel()
+                    .set_bit()
+                    .select_the_action_when_slave_pkt_mode_rxbuf_empty()
+                    .set_bit()
             });
+            /*
+             * APB clk : 50Mhz
+             * div  : scl       : baseclk [APB/((div/2) + 1)] : tBuf [1/bclk * 16]
+             * I2CG10[31:24] base clk4 for i2c auto recovery timeout counter (0x62)
+             * I2CG10[23:16] base clk3 for Standard-mode (100Khz) min tBuf 4.7us
+             * 0x1d : 100.8Khz  : 3.225Mhz                    : 4.96us
+             * 0x1e : 97.66Khz  : 3.125Mhz                    : 5.12us
+             * 0x1f : 97.85Khz  : 3.03Mhz                     : 5.28us
+             * 0x20 : 98.04Khz  : 2.94Mhz                     : 5.44us
+             * 0x21 : 98.61Khz  : 2.857Mhz                    : 5.6us
+             * 0x22 : 99.21Khz  : 2.77Mhz                     : 5.76us (default)
+             * I2CG10[15:8] base clk2 for Fast-mode (400Khz) min tBuf 1.3us
+             * 0x08 : 400Khz    : 10Mhz                       : 1.6us
+             * I2CG10[7:0] base clk1 for Fast-mode Plus (1Mhz) min tBuf 0.5us
+             * 0x03 : 1Mhz      : 20Mhz                       : 0.8us
+             */
+            i2cg.i2cg10().write(|w| unsafe { w.bits(0x62220803) });
         }
 
         // i2c reset
-        self.i2c.i2cc00().write(|w| unsafe {
-            w.bits(0)
-        });
+        self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
         if !self.config.multi_master {
-            self.i2c.i2cc00().write(|w| 
-                w.dis_multimaster_capability_for_master_fn_only().set_bit()
-            );
+            self.i2c
+                .i2cc00()
+                .write(|w| w.dis_multimaster_capability_for_master_fn_only().set_bit());
         }
-        self.i2c.i2cc00().write(|w| 
-            w.enbl_bus_autorelease_when_scllow_sdalow_or_slave_mode_inactive_timeout().set_bit()
-            .enbl_master_fn().set_bit()
-        );
+        self.i2c.i2cc00().write(|w| {
+            w.enbl_bus_autorelease_when_scllow_sdalow_or_slave_mode_inactive_timeout()
+                .set_bit()
+                .enbl_master_fn()
+                .set_bit()
+        });
 
         // set AC timing
-        self.config.clk_src = HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
+        self.config.clk_src =
+            HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
         dbg!(self, "clk_src {}", self.config.clk_src);
         self.select_i2c_clock();
         // clear interrupts
-        self.i2c.i2cm14().write(|w| unsafe {
-            w.bits(0xffffffff)
-        });
+        self.i2c.i2cm14().write(|w| unsafe { w.bits(0xffffffff) });
         // set interrupt
-        self.i2c.i2cm10().write(|w| 
-            w.enbl_pkt_cmd_done_int().set_bit()
-            .enbl_bus_recover_done_int().set_bit()
+        self.i2c.i2cm10().write(|w| {
+            w.enbl_pkt_cmd_done_int()
+                .set_bit()
+                .enbl_bus_recover_done_int()
+                .set_bit()
+        });
+        dbg!(
+            self,
+            "i2c init after set interrupt: {:#x}",
+            self.i2c.i2cm14().read().bits()
         );
-        dbg!(self, "i2c init after set interrupt: {:#x}", self.i2c.i2cm14().read().bits());
         if self.config.smbus_alert {
-            self.i2c.i2cm10().write(|w| w.enbl_smbus_dev_alert_int().set_bit());
+            self.i2c
+                .i2cm10()
+                .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
         }
 
         if cfg!(feature = "i2c_target") {
             dbg!(self, "i2c target enabled");
             // clear slave interrupts
-            self.i2c.i2cs24().write(|w| unsafe {
-                w.bits(0xffffffff)
-            });
+            self.i2c.i2cs24().write(|w| unsafe { w.bits(0xffffffff) });
             if self.config.xfer_mode == I2cXferMode::ByteMode {
-                self.i2c.i2cs20().write(|w| unsafe {
-                    w.bits(0xffff)
-                });
+                self.i2c.i2cs20().write(|w| unsafe { w.bits(0xffff) });
             } else {
                 self.i2c.i2cs20().write(|w| {
-                    w.enbl_slave_mode_inactive_timeout_int().set_bit()
-                    .enbl_pkt_cmd_done_int().set_bit()
+                    w.enbl_slave_mode_inactive_timeout_int()
+                        .set_bit()
+                        .enbl_pkt_cmd_done_int()
+                        .set_bit()
                 });
             }
         }
         self.dump_regs();
     }
     pub fn select_i2c_clock(&self) {
-        let p = unsafe{ &*I2cglobal::ptr() };
+        let p = unsafe { &*I2cglobal::ptr() };
         let mut div: u32 = 0;
         let mut divider_ratio: u32 = 0;
 
         if p.i2cg0c().read().clk_divider_mode_sel().bit_is_set() {
             let base_clk = self.config.clk_src;
-            let base_clk1 = (self.config.clk_src * 10) / 
-                ((p.i2cg10().read().base_clk1divisor_basedivider1().bits() as u32 + 2) * 10 / 2);
-            let base_clk2 = (self.config.clk_src * 10) / 
-                ((p.i2cg10().read().base_clk2divisor_basedivider2().bits() as u32 + 2) * 10 / 2);
-            let base_clk3 = (self.config.clk_src * 10) / 
-                ((p.i2cg10().read().base_clk3divisor_basedivider3().bits() as u32 + 2) * 10 / 2);
-            let base_clk4 = (self.config.clk_src * 10) / 
-                ((p.i2cg10().read().base_clk4divisor_basedivider4().bits() as u32 + 2) * 10 / 2);
-            
+            let base_clk1 = (self.config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk1divisor_basedivider1().bits() as u32 + 2) * 10 / 2);
+            let base_clk2 = (self.config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk2divisor_basedivider2().bits() as u32 + 2) * 10 / 2);
+            let base_clk3 = (self.config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk3divisor_basedivider3().bits() as u32 + 2) * 10 / 2);
+            let base_clk4 = (self.config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk4divisor_basedivider4().bits() as u32 + 2) * 10 / 2);
+
             // rounding
             if self.config.clk_src / (self.config.mode as u32) <= 32 {
                 div = 0;
@@ -582,44 +589,46 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             scl_high = min(scl_high, 0xf);
 
             /*Divisor : Base Clock : tCKHighMin : tCK High : tCK Low*/
-            self.i2c.i2cc04().write(|w| unsafe { 
-                w.base_clk_divisor_tbase_clk().bits(div as u8) 
+            self.i2c
+                .i2cc04()
+                .write(|w| unsafe { w.base_clk_divisor_tbase_clk().bits(div as u8) });
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclklow_pulse_width_tcklow()
+                    .bits(scl_low)
             });
-            self.i2c.i2cc04().write(|w| unsafe { 
-                w.cycles_of_master_sclclklow_pulse_width_tcklow().bits(scl_low) 
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclkhigh_pulse_width_tckhigh()
+                    .bits(scl_high)
             });
-            self.i2c.i2cc04().write(|w| unsafe { 
-                w.cycles_of_master_sclclkhigh_pulse_width_tckhigh().bits(scl_high) 
-            });
-            self.i2c.i2cc04().write(|w| unsafe { 
-                w.cycles_of_master_sclclkhigh_minimum_pulse_width_tckhigh_min().bits(scl_high - 1) 
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclkhigh_minimum_pulse_width_tckhigh_min()
+                    .bits(scl_high - 1)
             });
 
             if self.config.smbus_timeout {
-                self.i2c.i2cc04().write(|w| unsafe { 
-                    w.timeout_base_clk_divisor_tout_base_clk().bits(2)
-                    .timeout_timer().bits(8) 
+                self.i2c.i2cc04().write(|w| unsafe {
+                    w.timeout_base_clk_divisor_tout_base_clk()
+                        .bits(2)
+                        .timeout_timer()
+                        .bits(8)
                 });
             }
             if self.config.manual_sda_hold < 4 {
-                self.i2c.i2cc04().write(|w| unsafe { 
-                    w.hold_time_of_masterslave_data_thddat().bits(self.config.manual_sda_hold) 
+                self.i2c.i2cc04().write(|w| unsafe {
+                    w.hold_time_of_masterslave_data_thddat()
+                        .bits(self.config.manual_sda_hold)
                 });
             }
         }
     }
-    pub fn aspeed_i2c_is_irq_error(
-        &mut self,
-        irq_status: u32
-    )-> CmdErr {
-        if irq_status & AST_I2CM_ARBIT_LOSS>0 {
-		    return CmdErr::ErrArbLoss;
+    pub fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> CmdErr {
+        if irq_status & AST_I2CM_ARBIT_LOSS > 0 {
+            return CmdErr::ErrArbLoss;
         }
-        if irq_status & (AST_I2CM_SDA_DL_TO |
-                AST_I2CM_SCL_LOW_TO)>0 {
+        if irq_status & (AST_I2CM_SDA_DL_TO | AST_I2CM_SCL_LOW_TO) > 0 {
             return CmdErr::ErrBusy;
         }
-        if irq_status & (AST_I2CM_ABNORMAL)>0 {
+        if irq_status & (AST_I2CM_ABNORMAL) > 0 {
             return CmdErr::ErrAbnormal;
         }
         return CmdErr::NoErr;
@@ -629,37 +638,34 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     //No start
     pub fn do_i2cm_tx(&mut self) {
         let mut cmd = AST_I2CM_PKT_EN;
-        let mut xfer_len : u16;
+        let mut xfer_len: u16;
 
         let msg_len = self.i2c_data.msg.length;
         match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmatx_actual_len_byte().bits() as u16;
-            },
+            }
             I2cXferMode::BuffMode => {
                 xfer_len = self.i2c.i2cc0c().read().tx_data_byte_count().bits() as u16;
-            },
+            }
             I2cXferMode::ByteMode => {
                 xfer_len = 1;
-            },
+            }
         }
         dbg!(self, "do_i2cm_tx:: len {:#x}", xfer_len);
         self.i2c_data.master_xfer_cnt += xfer_len as u32;
         if self.i2c_data.master_xfer_cnt == msg_len {
             self.i2c_data.completion = true;
         } else {
-		    // continue current message 
-		    cmd |= AST_I2CM_TX_CMD;
+            // continue current message
+            cmd |= AST_I2CM_TX_CMD;
             self.aspeed_i2c_write(cmd);
         }
-	}
+    }
     //move data from i2c mapped buff to message buffer
-    pub fn  copy_from_buff(
-        &mut self,
-        xfer_len: u16
-    ) {
+    pub fn copy_from_buff(&mut self, xfer_len: u16) {
         let count_dword = (xfer_len >> 2) as usize;
-        let count_byte = (xfer_len & 0b11) as usize; 
+        let count_byte = (xfer_len & 0b11) as usize;
         let mut buf_index = self.i2c_data.master_xfer_cnt as usize;
         let mut data: u32 = 0;
         for i in 0..count_dword {
@@ -680,10 +686,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         }
     }
-    pub fn copy_to_buff(
-        &mut self, 
-        xfer_len: u16
-    ) {
+    pub fn copy_to_buff(&mut self, xfer_len: u16) {
         let mut buf_index = self.i2c_data.master_xfer_cnt as usize;
         let count_dword = (xfer_len >> 2) as usize;
         let count_byte = (xfer_len & 0b11) as usize;
@@ -694,8 +697,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 .expect("Not enough bytes for full DWORD");
 
             let data = u32::from_le_bytes(bytes); // assumes little-endian format
-            self.i2c_buff.buff(i).write(|w| unsafe {
-                w.bits(data)});
+            self.i2c_buff.buff(i).write(|w| unsafe { w.bits(data) });
 
             buf_index += 4;
         }
@@ -704,8 +706,9 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             for i in 0..count_byte {
                 data |= (self.i2c_data.msg.buf[buf_index + i] as u32) << (i * 8);
             }
-            self.i2c_buff.buff(count_dword).write(|w| unsafe {
-                w.bits(data)});
+            self.i2c_buff
+                .buff(count_dword)
+                .write(|w| unsafe { w.bits(data) });
         }
     }
 
@@ -713,51 +716,53 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     //If not, continue RX
     pub fn do_i2cm_rx(&mut self) {
         let mut cmd = AST_I2CM_PKT_EN;
-        let mut xfer_len : u16;
+        let mut xfer_len: u16;
         let msg_len = self.i2c_data.msg.length;
         dbg!(self, "do_i2cm_rx");
         match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmarx_actual_len_byte().bits();
-                dbg!(self, "dma data: {:#x}", unsafe {*self.mdma_buf.as_ptr()});
-            },
+                dbg!(self, "dma data: {:#x}", unsafe { *self.mdma_buf.as_ptr() });
+            }
             I2cXferMode::BuffMode => {
-                xfer_len = self.i2c.i2cc0c().read().actual_rxd_pool_buffer_size().bits() as u16;
-                //put data in msg buf 
-                self.copy_from_buff (xfer_len);
-            },
+                xfer_len = self
+                    .i2c
+                    .i2cc0c()
+                    .read()
+                    .actual_rxd_pool_buffer_size()
+                    .bits() as u16;
+                //put data in msg buf
+                self.copy_from_buff(xfer_len);
+            }
             I2cXferMode::ByteMode => {
                 xfer_len = 1;
-                self.i2c_data.msg.buf[self.i2c_data.master_xfer_cnt as usize] = 
+                self.i2c_data.msg.buf[self.i2c_data.master_xfer_cnt as usize] =
                     self.i2c.i2cc08().read().rx_byte_buffer().bits();
-            },
+            }
         }
         dbg!(self, "xfer_len {:#x}, msg_len {:#x}", xfer_len, msg_len);
         self.i2c_data.master_xfer_cnt += xfer_len as u32;
         if self.i2c_data.master_xfer_cnt == msg_len {
             self.i2c_data.completion = true;
         } else {
-		    // continue current message 
-		    cmd |= AST_I2CM_RX_CMD;
+            // continue current message
+            cmd |= AST_I2CM_RX_CMD;
             self.aspeed_i2c_read(cmd);
         }
     }
-	
-    pub fn aspeed_i2c_master_package_irq(
-        &mut self,
-        sts: u32,
-    ) {
-        dbg!(self, "aspeed_i2c_master_package_irq sts={:#x}",sts);
-        if sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK ||
-                sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK | AST_I2CM_NORMAL_STOP {
+
+    pub fn aspeed_i2c_master_package_irq(&mut self, sts: u32) {
+        dbg!(self, "aspeed_i2c_master_package_irq sts={:#x}", sts);
+        if sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK
+            || sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK | AST_I2CM_NORMAL_STOP
+        {
             dbg!(self, "M: PKT ERR | TX NAK (STOP)");
             self.i2c_data.cmd_err = CmdErr::ErrNXIO;
             self.i2c_data.completion = true;
-        } else if sts == AST_I2CM_NORMAL_STOP  {
+        } else if sts == AST_I2CM_NORMAL_STOP {
             dbg!(self, "M: STOP");
             self.i2c_data.completion = true;
-        } else if sts == AST_I2CM_TX_ACK ||
-                    sts == AST_I2CM_TX_ACK | AST_I2CM_NORMAL_STOP {
+        } else if sts == AST_I2CM_TX_ACK || sts == AST_I2CM_TX_ACK | AST_I2CM_NORMAL_STOP {
             dbg!(self, "M: TX_ACK (STOP)");
             //slave mode
             if cfg!(feature = "i2c_target") {
@@ -769,18 +774,21 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 if sts == AST_I2CM_TX_ACK {
                     if self.i2c.i2cs28().read().enbl_slave_pkt_op_mode().bit() {
                         let slave_cmd = self.i2c.i2cs28().read().bits();
-                        self.i2c.i2cs28().write(|w| unsafe {w.bits(0)});
-                        self.i2c.i2cs28().write(|w| unsafe {w.bits(slave_cmd)});
+                        self.i2c.i2cs28().write(|w| unsafe { w.bits(0) });
+                        self.i2c.i2cs28().write(|w| unsafe { w.bits(slave_cmd) });
                     }
                 }
             }
             self.do_i2cm_tx();
-        } else if sts == AST_I2CM_RX_DONE || 
-                    sts == AST_I2CM_RX_DONE | AST_I2CM_NORMAL_STOP {
+        } else if sts == AST_I2CM_RX_DONE || sts == AST_I2CM_RX_DONE | AST_I2CM_NORMAL_STOP {
             dbg!(self, "M: RX_DONE (STOP)");
             self.do_i2cm_rx();
         } else {
-            dbg!(self, "aspeed_i2c_master_package_irq, not handled sts={:#x}", sts);
+            dbg!(
+                self,
+                "aspeed_i2c_master_package_irq, not handled sts={:#x}",
+                sts
+            );
         }
     }
 
@@ -791,9 +799,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             sts &= !AST_I2CM_SMBUS_ALT;
         }
         if AST_I2CM_BUS_RECOVER_FAIL == AST_I2CM_BUS_RECOVER_FAIL & sts {
-            self.i2c.i2cm14().write(|w| unsafe{
-                w.bits(sts)
-            });
+            self.i2c.i2cm14().write(|w| unsafe { w.bits(sts) });
             if self.i2c_data.bus_recover > 0 {
                 self.i2c_data.cmd_err = CmdErr::ErrBusRecovery;
                 self.i2c_data.bus_recover = 0;
@@ -801,49 +807,51 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             return 1;
         }
         if AST_I2CM_BUS_RECOVER == AST_I2CM_BUS_RECOVER & sts {
-            self.i2c.i2cm14().write(|w|
-                w.wcbus_recover_fail_sts().set_bit()
-            );
+            self.i2c
+                .i2cm14()
+                .write(|w| w.wcbus_recover_fail_sts().set_bit());
             self.i2c_data.cmd_err = CmdErr::NoErr;
             return 1;
         }
         if AST_I2CM_SMBUS_ALT == AST_I2CM_SMBUS_ALT & sts {
             sts &= !AST_I2CM_SMBUS_ALT;
             if self.i2c.i2cm10().read().enbl_smbus_dev_alert_int().bit() {
-                //Disable ALT INT 
-                self.i2c.i2cm10().modify(|_,w|{
-                    w.enbl_smbus_dev_alert_int().clear_bit()
-                });
+                //Disable ALT INT
+                self.i2c
+                    .i2cm10()
+                    .modify(|_, w| w.enbl_smbus_dev_alert_int().clear_bit());
             }
-            self.i2c.i2cm14().modify(|_,w| {
-                w.wcsmbus_dev_alert_intsts().bit(true)
-            });
+            self.i2c
+                .i2cm14()
+                .modify(|_, w| w.wcsmbus_dev_alert_intsts().bit(true));
         }
-	    self.i2c_data.cmd_err = self.aspeed_i2c_is_irq_error(sts);
+        self.i2c_data.cmd_err = self.aspeed_i2c_is_irq_error(sts);
         if self.i2c_data.cmd_err != CmdErr::NoErr {
-            self.i2c.i2cm14().modify(|_,w| {
-                w.wcpkt_cmd_done_intsts().bit(true)
-                 .wcpkt_cmd_fail_intsts().bit(true)
+            self.i2c.i2cm14().modify(|_, w| {
+                w.wcpkt_cmd_done_intsts()
+                    .bit(true)
+                    .wcpkt_cmd_fail_intsts()
+                    .bit(true)
             });
             self.i2c_data.completion = true;
             return 1;
         }
         if AST_I2CM_PKT_DONE == AST_I2CM_PKT_DONE & sts {
             sts &= !AST_I2CM_PKT_DONE;
-            self.i2c.i2cm14().modify(|_,w| {
-                w.wcpkt_cmd_done_intsts().bit(true)
-            });
+            self.i2c
+                .i2cm14()
+                .modify(|_, w| w.wcpkt_cmd_done_intsts().bit(true));
             self.aspeed_i2c_master_package_irq(sts);
             return 1;
         }
         if sts > 0 {
-            dbg!(self, "aspeed_i2c_master_irq left sts={:#x}",sts);
-            self.i2c.i2cm14().write(|w| unsafe {w.bits(sts)});
+            dbg!(self, "aspeed_i2c_master_irq left sts={:#x}", sts);
+            self.i2c.i2cm14().write(|w| unsafe { w.bits(sts) });
         }
         return 0;
     }
 
-    pub fn aspeed_i2c_isr (&mut self) {
+    pub fn aspeed_i2c_isr(&mut self) {
         //check slave mode first
         if self.i2c.i2cc00().read().enbl_slave_fn().bit() {
             if self.aspeed_i2c_slave_irq() != 0 {
@@ -853,8 +861,8 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.aspeed_i2c_master_irq();
     }
 
-    pub fn i2c_wait_completion (&mut self) {
-        let mut delay = DummyDelay{};
+    pub fn i2c_wait_completion(&mut self) {
+        let mut delay = DummyDelay {};
         let mut timeout = 1_000_000;
         while timeout > 0 && !self.i2c_data.completion {
             self.aspeed_i2c_master_irq();
@@ -865,11 +873,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             self.i2c_data.cmd_err = CmdErr::ErrTimeout;
         }
     }
-    pub fn prepare_read(
-        &mut self,
-        addr: u8, 
-        len: u32,
-    ) {
+    pub fn prepare_read(&mut self, addr: u8, len: u32) {
         //initialize xfer data
         self.i2c_data.addr = addr;
         self.i2c_data.alert_enable = false;
@@ -882,31 +886,24 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c_data.master_xfer_cnt = 0;
     }
     //copy data
-    pub fn read_processed (
-        &mut self,
-        buffer: & mut [u8],
-    ) {
+    pub fn read_processed(&mut self, buffer: &mut [u8]) {
         dbg!(self, "read_processed");
         match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
-                let src = self.mdma_buf.as_mut_slice(0, self.i2c_data.msg.length as usize);
+                let src = self
+                    .mdma_buf
+                    .as_mut_slice(0, self.i2c_data.msg.length as usize);
                 dbg!(self, "{:?}", src);
                 buffer.copy_from_slice(src);
-
-            },
+            }
             _ => {
                 let src = &self.i2c_data.msg.buf[..self.i2c_data.msg.length as usize];
                 dbg!(self, "{:?}", src);
                 buffer.copy_from_slice(src);
-            },
+            }
         }
     }
-    pub fn prepare_write(
-        &mut self,
-        addr: u8, 
-        bytes: &[u8],
-        stop: bool,
-    ) {
+    pub fn prepare_write(&mut self, addr: u8, bytes: &[u8], stop: bool) {
         //initialize xfer data
         self.i2c_data.addr = addr;
         self.i2c_data.alert_enable = false;
@@ -920,26 +917,23 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             I2cXferMode::DmaMode => {
                 let dest = &mut self.mdma_buf.as_mut_slice(0, bytes.len() as usize);
                 dest.copy_from_slice(bytes);
-            },
-            _ =>{
-	            //write
+            }
+            _ => {
+                //write
                 let dest = &mut self.i2c_data.msg.buf[..bytes.len()];
                 dest.copy_from_slice(bytes);
-            },
+            }
         }
     }
-        
-    pub fn aspeed_i2c_read (
-        &mut self,
-        ctrl_cmd: u32
-    ) {
+
+    pub fn aspeed_i2c_read(&mut self, ctrl_cmd: u32) {
         let mut xfer_len: u16 = 0;
         let mut len_left: u32 = 0;
-	    let mut cmd: u32 = ctrl_cmd;
+        let mut cmd: u32 = ctrl_cmd;
         let msg_len = self.i2c_data.msg.length;
-	    dbg!(self, "aspeed_i2c_read");
+        dbg!(self, "aspeed_i2c_read");
         cmd |= AST_I2CM_RX_CMD;
-		match self.config.xfer_mode {
+        match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
                 if len_left > ASPEED_I2C_DMA_SIZE as u32 {
@@ -949,21 +943,27 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     xfer_len = len_left as u16;
                     cmd |= AST_I2CM_RX_CMD_LAST | AST_I2CM_STOP_CMD;
                 }
-                if xfer_len>0 {
+                if xfer_len > 0 {
                     dbg!(self, "rx_len {:#x}", xfer_len);
-                    unsafe {*self.mdma_buf.as_mut_ptr() = 0;}
+                    unsafe {
+                        *self.mdma_buf.as_mut_ptr() = 0;
+                    }
                     let phy_addr = self.mdma_buf.as_mut_ptr() as u32;
                     cmd |= AST_I2CM_RX_DMA_EN;
-                    self.i2c.i2cm1c().modify(|_,w| unsafe {
-                        w.dmarx_buf_len_byte().bits(xfer_len-1)
-                        .dmarx_buf_len_wr_enbl_for_cur_write_cmd().set_bit()
+                    self.i2c.i2cm1c().modify(|_, w| unsafe {
+                        w.dmarx_buf_len_byte()
+                            .bits(xfer_len - 1)
+                            .dmarx_buf_len_wr_enbl_for_cur_write_cmd()
+                            .set_bit()
                     });
-                    dbg!(self, "before rx data: {:#x}", unsafe{*self.mdma_buf.as_ptr()});
-                    self.i2c.i2cm34().modify(|_,w| unsafe {
-                        w.sdramdmabuffer_base_addr1().bits(phy_addr)
+                    dbg!(self, "before rx data: {:#x}", unsafe {
+                        *self.mdma_buf.as_ptr()
                     });
+                    self.i2c
+                        .i2cm34()
+                        .modify(|_, w| unsafe { w.sdramdmabuffer_base_addr1().bits(phy_addr) });
                 }
-            },
+            }
             I2cXferMode::BuffMode => {
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
 
@@ -974,39 +974,36 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     xfer_len = len_left as u16;
                     cmd |= AST_I2CM_RX_CMD_LAST | AST_I2CM_STOP_CMD;
                 }
-                if xfer_len>0 {
-					cmd |= AST_I2CM_RX_BUFF_EN;
-                    self.i2c.i2cc0c().modify(|_,w | unsafe {
+                if xfer_len > 0 {
+                    cmd |= AST_I2CM_RX_BUFF_EN;
+                    self.i2c.i2cc0c().modify(|_, w| unsafe {
                         w.rx_pool_buffer_size().bits((xfer_len - 1) as u8)
                     });
                 }
-            },
+            }
             I2cXferMode::ByteMode => {
                 //byte mode
-                if msg_len == self.i2c_data.master_xfer_cnt+1 {
+                if msg_len == self.i2c_data.master_xfer_cnt + 1 {
                     //last transaction
                     cmd |= AST_I2CM_RX_CMD_LAST | AST_I2CM_STOP_CMD;
                     xfer_len = 1;
                 }
-            },
+            }
         }
         //triggering
         dbg!(self, "trigger cmd {:#x}", cmd);
-        self.i2c.i2cm18().write(|w| unsafe {w.bits(cmd)});
-	}
+        self.i2c.i2cm18().write(|w| unsafe { w.bits(cmd) });
+    }
 
-    pub fn aspeed_i2c_write (
-        &mut self,
-        ctrl_cmd: u32
-    ) {
+    pub fn aspeed_i2c_write(&mut self, ctrl_cmd: u32) {
         let mut xfer_len: u16 = 0;
         let mut len_left: u32 = 0;
-	    let mut cmd: u32 = ctrl_cmd;
+        let mut cmd: u32 = ctrl_cmd;
         let msg_len = self.i2c_data.msg.length as u32;
-       
+
         dbg!(self, "aspeed_i2c_write");
         cmd |= AST_I2CM_TX_CMD;
-		match self.config.xfer_mode {
+        match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
                 //dma mode
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
@@ -1019,20 +1016,24 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                         cmd |= AST_I2CM_STOP_CMD;
                     }
                 }
-                if xfer_len>0 {
+                if xfer_len > 0 {
                     let phy_addr = self.mdma_buf.as_mut_ptr() as u32;
-                    dbg!(self, "write len {:#x}, data {:#x}", xfer_len, unsafe{*self.mdma_buf.as_ptr()});
+                    dbg!(self, "write len {:#x}, data {:#x}", xfer_len, unsafe {
+                        *self.mdma_buf.as_ptr()
+                    });
                     cmd |= AST_I2CM_TX_DMA_EN | AST_I2CM_TX_CMD;
-                  
+
                     self.i2c.i2cm1c().write(|w| unsafe {
-                        w.dmatx_buf_len_byte().bits(xfer_len-1)
-                        .dmatx_buf_len_wr_enbl_for_cur_write_cmd().set_bit()
+                        w.dmatx_buf_len_byte()
+                            .bits(xfer_len - 1)
+                            .dmatx_buf_len_wr_enbl_for_cur_write_cmd()
+                            .set_bit()
                     });
-                    self.i2c.i2cm30().write(|w| unsafe {
-                        w.sdramdmabuffer_base_addr().bits(phy_addr)
-                    });
+                    self.i2c
+                        .i2cm30()
+                        .write(|w| unsafe { w.sdramdmabuffer_base_addr().bits(phy_addr) });
                 }
-            },
+            }
             I2cXferMode::BuffMode => {
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
                 if len_left > I2C_BUF_SIZE as u32 {
@@ -1044,14 +1045,14 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                         cmd |= AST_I2CM_STOP_CMD;
                     }
                 }
-                if xfer_len>0 {
+                if xfer_len > 0 {
                     cmd |= AST_I2CM_TX_BUFF_EN | AST_I2CM_TX_CMD;
                     self.copy_to_buff(xfer_len);
-                    self.i2c.i2cc0c().modify(|_,w | unsafe {
+                    self.i2c.i2cc0c().modify(|_, w| unsafe {
                         w.tx_data_byte_count().bits((xfer_len - 1) as u8)
                     });
                 }
-            },
+            }
             I2cXferMode::ByteMode => {
                 if self.i2c_data.master_xfer_cnt + 1 == msg_len {
                     if self.i2c_data.stop {
@@ -1059,37 +1060,41 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     }
                 }
                 let buf_index = self.i2c_data.master_xfer_cnt as usize;
-                dbg!(self, "byte mode tx data: {:#x}", self.i2c_data.msg.buf[buf_index]);
-                self.i2c.i2cc08().modify(|_,w| unsafe {
+                dbg!(
+                    self,
+                    "byte mode tx data: {:#x}",
+                    self.i2c_data.msg.buf[buf_index]
+                );
+                self.i2c.i2cc08().modify(|_, w| unsafe {
                     w.tx_byte_buffer().bits(self.i2c_data.msg.buf[buf_index])
                 });
-            },
-		}
+            }
+        }
         //triggering
         dbg!(self, "trigger cmd {:#x}", cmd);
-        self.i2c.i2cm18().write(|w| unsafe {w.bits(cmd)});
-	}
+        self.i2c.i2cm18().write(|w| unsafe { w.bits(cmd) });
+    }
 
     //master recover bus
     pub fn aspeed_new_i2c_recover_bus(&mut self) -> bool {
         //disable master and slave functionality to put it in idle state
-        self.i2c.i2cc00().modify(|_, w | {
-            w.enbl_master_fn().bit(false)
-            .enbl_slave_fn().bit(false)
-        });
+        self.i2c
+            .i2cc00()
+            .modify(|_, w| w.enbl_master_fn().bit(false).enbl_slave_fn().bit(false));
         //enable master functionality
-        self.i2c.i2cc00().modify(|_, w | {
-            w.enbl_master_fn().bit(true)
-        });
+        self.i2c
+            .i2cc00()
+            .modify(|_, w| w.enbl_master_fn().bit(true));
         self.i2c_data.bus_recover = 1;
         self.i2c_data.cmd_err = CmdErr::NoErr;
-        //Check SDA and SCL status	
-        if !self.i2c.i2cc08().read().sampled_sdaline_state().bit() &&
-            self.i2c.i2cc08().read().sampled_sclline_state().bit() {
+        //Check SDA and SCL status
+        if !self.i2c.i2cc08().read().sampled_sdaline_state().bit()
+            && self.i2c.i2cc08().read().sampled_sclline_state().bit()
+        {
             //stuck and recover
-            self.i2c.i2cm18().modify(|_,w| {
-                w.enbl_bus_recover_cmd().bit(true)
-            });
+            self.i2c
+                .i2cm18()
+                .modify(|_, w| w.enbl_bus_recover_cmd().bit(true));
             self.i2c_wait_completion();
             if self.i2c_data.cmd_err == CmdErr::NoErr {
                 return true;
@@ -1102,16 +1107,13 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         }
     }
 
-    pub fn i2c_aspeed_transfer(
-        &mut self, 
-    ) -> Result<(), Error> {
+    pub fn i2c_aspeed_transfer(&mut self) -> Result<(), Error> {
         let mut cmd: u32 = 0;
 
         //If bus is busy in a single master environment, attempt recovery
-        if !self.config.multi_master && 
-            self.i2c.i2cc08().read().bus_busy_status().bit() {
+        if !self.config.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
             if !self.aspeed_new_i2c_recover_bus() {
-               return Err(Error::Bus);
+                return Err(Error::Bus);
             }
         }
         cmd = AST_I2CM_PKT_EN | ast_i2cm_pkt_addr(self.i2c_data.addr) | AST_I2CM_START_CMD;
@@ -1119,17 +1121,15 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             self.aspeed_i2c_read(cmd);
         } else {
             self.aspeed_i2c_write(cmd);
-        } 
+        }
         self.i2c_wait_completion();
-	    if !self.i2c_data.completion {
+        if !self.i2c_data.completion {
             //timeout, do controller reset to recover
-            let isr= self.i2c.i2cm14().read().bits();
-		    if isr>0 || 
-                self.i2c.i2cc08().read().xfer_data_direction().bits()>0 {
-
+            let isr = self.i2c.i2cm14().read().bits();
+            if isr > 0 || self.i2c.i2cc08().read().xfer_data_direction().bits() > 0 {
                 let ctrl = self.i2c.i2cc00().read().bits();
-                self.i2c.i2cc00().write(|w| unsafe {w.bits(0)});
-                self.i2c.i2cc00().write(|w| unsafe {w.bits(ctrl)});
+                self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
+                self.i2c.i2cc00().write(|w| unsafe { w.bits(ctrl) });
                 if cfg!(feature = "i2c_target") {
                     cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
                     if ctrl & AST_I2CC_SLAVE_EN == AST_I2CC_SLAVE_EN {
@@ -1137,35 +1137,41 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                             I2cXferMode::DmaMode => {
                                 cmd |= AST_I2CS_RX_DMA_EN;
                                 self.i2c.i2cs3c().write(|w| unsafe {
-                                    w.sdramdmabuffer_base_addr3().bits(self.sdma_buf.as_mut_ptr() as u32)
+                                    w.sdramdmabuffer_base_addr3()
+                                        .bits(self.sdma_buf.as_mut_ptr() as u32)
                                 });
                                 self.i2c.i2cs38().write(|w| unsafe {
-                                    w.sdramdmabuffer_base_addr2().bits(self.sdma_buf.as_mut_ptr() as u32)
+                                    w.sdramdmabuffer_base_addr2()
+                                        .bits(self.sdma_buf.as_mut_ptr() as u32)
                                 });
                                 self.i2c.i2cs2c().write(|w| unsafe {
-                                    w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
-                                    .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                                    w.dmarx_buf_len_byte()
+                                        .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                                        .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                                        .set_bit()
                                 });
-                            },
+                            }
                             I2cXferMode::BuffMode => {
                                 cmd |= AST_I2CS_RX_BUFF_EN;
                                 self.i2c.i2cc0c().write(|w| unsafe {
                                     w.rx_pool_buffer_size().bits(I2C_BUF_SIZE - 1)
                                 });
-                            },
+                            }
                             I2cXferMode::ByteMode => {
                                 cmd &= !AST_I2CS_PKT_MODE_EN;
-                            },
+                            }
                         }
-                        self.i2c.i2cs28().write(|w| unsafe {
-                            w.bits(cmd)
-                        });
+                        self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
                     }
                 }
                 return Err(Error::Timeout);
             }
-	    }
-        dbg!(self, "i2c_aspeed_transfer cmd_err = {:?}", self.i2c_data.cmd_err);
+        }
+        dbg!(
+            self,
+            "i2c_aspeed_transfer cmd_err = {:?}",
+            self.i2c_data.cmd_err
+        );
         if self.i2c_data.cmd_err != CmdErr::NoErr {
             return Err(Error::NoAcknowledge(NoAcknowledgeSource::Unknown));
         }
@@ -1174,149 +1180,143 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     //slave
     pub fn i2c_aspeed_slave_register(
         &mut self,
-        target_addr: u8,			     
+        target_addr: u8,
         target: Option<&'a mut I2CT>,
     ) -> Result<(), Error> {
-	    let mut cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
+        let mut cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
 
-        // check slave config exist or has attached ever 
-        if self.i2c_data.slave_attached || 
-            self.i2c.i2cc00().read().enbl_slave_fn().bit() {
+        // check slave config exist or has attached ever
+        if self.i2c_data.slave_attached || self.i2c.i2cc00().read().enbl_slave_fn().bit() {
             return Err(Error::Invalid);
         }
 
         if target_addr == self.i2c_data.slave_target_addr {
             return Err(Error::Invalid);
         }
-        
+
         self.i2c_data.set_target(target_addr, target);
 
         dbg!(self, "set slave addr {:#x}", target_addr);
-        //set slave addr 
-        self.i2c.i2cs40().modify(|_,w| unsafe { 
-            w.slave_dev_addr1().bits(target_addr)
-             .enbl_slave_dev_addr1only_for_new_reg_mode().bit(true)
+        //set slave addr
+        self.i2c.i2cs40().modify(|_, w| unsafe {
+            w.slave_dev_addr1()
+                .bits(target_addr)
+                .enbl_slave_dev_addr1only_for_new_reg_mode()
+                .bit(true)
         });
-        // trigger rx buffer 
+        // trigger rx buffer
         match self.config.xfer_mode {
             I2cXferMode::DmaMode => {
                 cmd |= AST_I2CS_RX_DMA_EN;
                 let slave_dma_addr = self.sdma_buf.as_mut_ptr() as u32;
-                self.i2c.i2cs38().write(|w| {
-                    unsafe { w.sdramdmabuffer_base_addr2().bits(slave_dma_addr) }
-                });
-                self.i2c.i2cs3c().write(|w| {
-                    unsafe { w.sdramdmabuffer_base_addr3().bits(slave_dma_addr) }
-                });
+                self.i2c
+                    .i2cs38()
+                    .write(|w| unsafe { w.sdramdmabuffer_base_addr2().bits(slave_dma_addr) });
+                self.i2c
+                    .i2cs3c()
+                    .write(|w| unsafe { w.sdramdmabuffer_base_addr3().bits(slave_dma_addr) });
                 self.i2c.i2cs2c().write(|w| unsafe {
-                    w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
-                    .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                    w.dmarx_buf_len_byte()
+                        .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                        .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                        .set_bit()
                 });
-
-            },
+            }
             I2cXferMode::BuffMode => {
                 cmd |= AST_I2CS_RX_BUFF_EN;
-                self.i2c.i2cc0c().write(|w| unsafe {
-                    w.rx_pool_buffer_size().bits(I2C_BUF_SIZE - 1)
-                });
-            }, 
+                self.i2c
+                    .i2cc0c()
+                    .write(|w| unsafe { w.rx_pool_buffer_size().bits(I2C_BUF_SIZE - 1) });
+            }
             I2cXferMode::ByteMode => {
                 cmd &= !AST_I2CS_PKT_MODE_EN;
-            }, 
+            }
         }
-        //apply slave device setting and trigger 
-        self.i2c.i2cs28().write(|w| unsafe {w.bits(cmd)});
+        //apply slave device setting and trigger
+        self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
 
-        // enable slave device 
-        self.i2c.i2cc00().modify(|_,w| {
-            w.enbl_slave_fn().bit(true)
-        });
+        // enable slave device
+        self.i2c.i2cc00().modify(|_, w| w.enbl_slave_fn().bit(true));
         self.i2c_data.slave_attached = true;
-        
+
         self.dump_regs();
 
         Ok(())
     }
 
-    pub fn i2c_aspeed_slave_unregister(
-        &mut self,
-    ) -> Result<(), Error> {
-        
+    pub fn i2c_aspeed_slave_unregister(&mut self) -> Result<(), Error> {
         if !self.i2c_data.slave_attached {
-           return Err(Error::Invalid);
+            return Err(Error::Invalid);
         }
 
         self.i2c_data.slave_target = None;
         self.i2c_data.slave_target_addr = 0;
         //Turn off slave mode.
-        self.i2c.i2cc00().modify(|_,w| {
-            w.enbl_slave_fn().bit(false)
-        });
+        self.i2c
+            .i2cc00()
+            .modify(|_, w| w.enbl_slave_fn().bit(false));
         //remove slave address
-        self.i2c.i2cs40().modify(|_,w| {
-            unsafe { w.slave_dev_addr1().bits(0)
-             .enbl_slave_dev_addr1only_for_new_reg_mode().bit(false) }
+        self.i2c.i2cs40().modify(|_, w| unsafe {
+            w.slave_dev_addr1()
+                .bits(0)
+                .enbl_slave_dev_addr1only_for_new_reg_mode()
+                .bit(false)
         });
         self.i2c_data.slave_attached = false;
         Ok(())
     }
 
-    pub fn aspeed_i2c_slave_timeout(
-        &mut self,
-        sts: u32,
-        reset_slave: bool,
-    ) {
+    pub fn aspeed_i2c_slave_timeout(&mut self, sts: u32, reset_slave: bool) {
         let mut cmd: u32 = 0;
-        // Reset time out counter 
+        // Reset time out counter
         let mut ac_timing = self.i2c.i2cc04().read().bits();
-        
+
         ac_timing &= AST_I2CC_AC_TIMING_MASK;
         self.i2c.i2cc04().write(|w| unsafe { w.bits(ac_timing) });
-		self.i2c.i2cc04().modify(|_,w| {
-            unsafe { w.timeout_timer().bits(I2C_TIMEOUT_COUNT) }
-        });
+        self.i2c
+            .i2cc04()
+            .modify(|_, w| unsafe { w.timeout_timer().bits(I2C_TIMEOUT_COUNT) });
         if reset_slave {
-             //Turn off slave mode
-            self.i2c.i2cc00().modify(|_,w| {
-                w.enbl_slave_fn().bit(false)
-            });
+            //Turn off slave mode
+            self.i2c
+                .i2cc00()
+                .modify(|_, w| w.enbl_slave_fn().bit(false));
             //Turn on slave mode
-            self.i2c.i2cc00().modify(|_,w| {
-                w.enbl_slave_fn().bit(true)
-            });
+            self.i2c.i2cc00().modify(|_, w| w.enbl_slave_fn().bit(true));
         }
         if self.config.xfer_mode == I2cXferMode::ByteMode {
-            //Clear irq and re-send slave trigger command 
-            cmd = AST_I2CS_ACTIVE_ALL; 
-            self.i2c.i2cs28().write(|w| unsafe {w.bits(cmd)});
-            self.i2c.i2cs24().write(|w | { unsafe { w.bits(sts) }});
+            //Clear irq and re-send slave trigger command
+            cmd = AST_I2CS_ACTIVE_ALL;
+            self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
+            self.i2c.i2cs24().write(|w| unsafe { w.bits(sts) });
             self.i2c.i2cs24().read().bits();
-        }else {
+        } else {
             cmd = SLAVE_TRIGGER_CMD | AST_I2CS_RX_DMA_EN;
             self.i2c.i2cs2c().write(|w| unsafe {
-                    w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
-                    .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                w.dmarx_buf_len_byte()
+                    .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                    .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                    .set_bit()
             });
-            self.i2c.i2cs28().write(|w| unsafe {w.bits(cmd)});
-            self.i2c.i2cs24().modify(|_,w | {
-                w.wcpkt_cmd_done_intsts().bit(true)
-            });
+            self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
+            self.i2c
+                .i2cs24()
+                .modify(|_, w| w.wcpkt_cmd_done_intsts().bit(true));
         }
-		self.i2c_slave_event_stop();
-		self.i2c_data.slave_operate = 0;
+        self.i2c_slave_event_stop();
+        self.i2c_data.slave_operate = 0;
     }
 
     pub fn aspeed_i2c_slave_irq(&mut self) -> u32 {
-
-	    let ier = self.i2c.i2cs20().read().bits(); 
-	    let mut sts = self.i2c.i2cs24().read().bits(); 
+        let ier = self.i2c.i2cs20().read().bits();
+        let mut sts = self.i2c.i2cs24().read().bits();
         //dbg!(self, "aspeed_i2c_slave_irq: ier {:#x}, sts {:#x}", ier, sts);
-        //return without necessary slave interrupt 
+        //return without necessary slave interrupt
         if (sts & ier) == 0 {
             return 0;
         }
         dbg!(self, "Slave irq ier {:#x}, sts {:#x}", ier, sts);
-        // remove unnessary status flags 
+        // remove unnessary status flags
         sts &= !(AST_I2CS_ADDR_INDICATE_MASK | AST_I2CS_SLAVE_PENDING);
         if AST_I2CS_ADDR1_NAK == AST_I2CS_ADDR1_NAK & sts {
             sts &= !AST_I2CS_ADDR1_NAK;
@@ -1330,43 +1330,38 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         if AST_I2CS_ADDR_MASK == AST_I2CS_ADDR_MASK & sts {
             sts &= !AST_I2CS_ADDR_MASK;
         }
-	    if AST_I2CS_INACTIVE_TO == AST_I2CS_INACTIVE_TO & sts {
-            self.aspeed_i2c_slave_timeout(sts,true);
+        if AST_I2CS_INACTIVE_TO == AST_I2CS_INACTIVE_TO & sts {
+            self.aspeed_i2c_slave_timeout(sts, true);
             return 1;
         }
-	    if AST_I2CS_PKT_DONE & sts == AST_I2CS_PKT_DONE {
-             self.aspeed_i2c_slave_packet_irq(sts);
+        if AST_I2CS_PKT_DONE & sts == AST_I2CS_PKT_DONE {
+            self.aspeed_i2c_slave_packet_irq(sts);
         } else {
-             self.aspeed_i2c_slave_byte_irq(sts);
+            self.aspeed_i2c_slave_byte_irq(sts);
         }
-	    return 1;
+        return 1;
     }
-    
+
     //
     //I2C_SLAVE_WRITE_REQUESTED:
     //
-    pub fn i2c_slave_event_stop(
-         &mut self,
-    ) {
+    pub fn i2c_slave_event_stop(&mut self) {
         match self.i2c_data.slave_target.as_mut() {
             Some(target) => {
                 ////target.on_stop();
-            },
+            }
             None => {
                 // Handle the case where config is not set
             }
         }
     }
-    pub fn i2c_slave_pkt_read(
-         &mut self,
-         event: I2cSEvent,
-    ) {
+    pub fn i2c_slave_pkt_read(&mut self, event: I2cSEvent) {
         if event == I2cSEvent::SlaveRdReq {
             dbg!(self, "read_requested");
             if let Some(target) = self.i2c_data.slave_target.as_mut() {
                 ////target.on_transaction_start(false);
             }
-        }else if event == I2cSEvent::SlaveRdProc{
+        } else if event == I2cSEvent::SlaveRdProc {
             dbg!(self, "read_processed");
             match self.config.xfer_mode {
                 I2cXferMode::DmaMode => {
@@ -1380,7 +1375,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                         slice[0] = 0xde;
                     }
                     dbg!(self, "dma tx data {:#x}", slice[0]);
-                },
+                }
                 I2cXferMode::BuffMode => {
                     let tx_len = self.i2c.i2cc0c().read().tx_data_byte_count().bits();
                     dbg!(self, "buff tx_len {:#x}", tx_len);
@@ -1392,16 +1387,13 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     }
                     dbg!(self, "buff tx data {:#x}", self.i2c_data.msg.buf[0]);
                 }
-                _ => {},
+                _ => {}
             }
         }
     }
-    pub fn i2c_slave_pkt_write(
-         &mut self,
-         event: I2cSEvent,
-    ) {
+    pub fn i2c_slave_pkt_write(&mut self, event: I2cSEvent) {
         if event == I2cSEvent::SlaveWrReq {
-            //Another I2C master wants to write data to us. 
+            //Another I2C master wants to write data to us.
             //This event should be sent once our own address and the write bit was detected
             //The data did not arrive yet
             //ack the address phase
@@ -1422,24 +1414,29 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                         ////target.on_write(slice);
                     }
                     dbg!(self, "write_received: data={:?}", slice);
-                },
+                }
                 I2cXferMode::BuffMode => {
-                    let slave_rx_len = self.i2c.i2cc0c().read().actual_rxd_pool_buffer_size().bits() as u16;
+                    let slave_rx_len = self
+                        .i2c
+                        .i2cc0c()
+                        .read()
+                        .actual_rxd_pool_buffer_size()
+                        .bits() as u16;
                     dbg!(self, "buff write_received: len={:#x}", slave_rx_len);
                     if let Some(target) = self.i2c_data.slave_target.as_mut() {
                         ////target.on_write(&self.i2c_data.msg.buf[..(slave_rx_len as usize)]);
                     }
-                    dbg!(self, "write_received data={:?}", &self.i2c_data.msg.buf[0..(slave_rx_len as usize)]);
+                    dbg!(
+                        self,
+                        "write_received data={:?}",
+                        &self.i2c_data.msg.buf[0..(slave_rx_len as usize)]
+                    );
                 }
-                _ => {},
+                _ => {}
             }
         }
     }
-    pub fn i2c_slave_byte_write(
-         &mut self,
-         event: I2cSEvent,
-         val: u8,
-    ) {
+    pub fn i2c_slave_byte_write(&mut self, event: I2cSEvent, val: u8) {
         if event == I2cSEvent::SlaveWrReq {
             dbg!(self, "byte write_requested");
             if let Some(target) = self.i2c_data.slave_target.as_mut() {
@@ -1452,17 +1449,13 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         }
     }
-    pub fn i2c_slave_byte_read(
-         &mut self,
-         event: I2cSEvent,
-         val: &mut u8,
-    ) {
+    pub fn i2c_slave_byte_read(&mut self, event: I2cSEvent, val: &mut u8) {
         if event == I2cSEvent::SlaveRdReq {
             dbg!(self, "byte read_requested");
             if let Some(target) = self.i2c_data.slave_target.as_mut() {
                 ////target.on_transaction_start(false);
             }
-        }else if event == I2cSEvent::SlaveRdProc{
+        } else if event == I2cSEvent::SlaveRdProc {
             dbg!(self, "byte read_processed");
             if let Some(target) = self.i2c_data.slave_target.as_mut() {
                 ////target.on_read(core::slice::from_mut(val));
@@ -1472,26 +1465,22 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         }
     }
-    pub fn aspeed_i2c_slave_packet_irq(
-        &mut self,
-        sts :u32
-    ) {
+    pub fn aspeed_i2c_slave_packet_irq(&mut self, sts: u32) {
         let mut cmd: u32 = 0;
         let mut sts = sts;
         dbg!(self, "enter aspeed_i2c_slave_packet_irq");
-        // clear irq first 
-        self.i2c.i2cs24().modify(|_,w | {
-            w.wcpkt_cmd_done_intsts().bit(true)
-        });
+        // clear irq first
+        self.i2c
+            .i2cs24()
+            .modify(|_, w| w.wcpkt_cmd_done_intsts().bit(true));
         sts &= !(AST_I2CS_PKT_DONE | AST_I2CS_PKT_ERROR);
 
-        if sts == AST_I2CS_SLAVE_MATCH ||
-            sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE {
+        if sts == AST_I2CS_SLAVE_MATCH || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE {
             dbg!(self, "S: Sw\n");
             self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
-        }
-        else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_RX_DMA ||
-            sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA {
+        } else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_RX_DMA
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA
+        {
             dbg!(self, "S: Sw|D - issue rx\n");
             cmd = SLAVE_TRIGGER_CMD;
             match self.config.xfer_mode {
@@ -1500,35 +1489,44 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     self.i2c.i2cs4c().write(|w| unsafe { w.bits(0) });
                     self.i2c.i2cs2c().write(|w| unsafe {
-                        w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
-                        .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                        w.dmarx_buf_len_byte()
+                            .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                            .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
                     cmd |= AST_I2CS_RX_DMA_EN;
-                },
+                }
                 I2cXferMode::BuffMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
                     cmd |= AST_I2CS_RX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-		}
-	    else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_STOP {
+        } else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_STOP {
             dbg!(self, "S : Sw | P\n");
             self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
             match self.config.xfer_mode {
-                I2cXferMode::DmaMode => { cmd |= AST_I2CS_RX_DMA_EN;},
-                I2cXferMode::BuffMode => { cmd |= AST_I2CS_RX_BUFF_EN;},
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                I2cXferMode::DmaMode => {
+                    cmd |= AST_I2CS_RX_DMA_EN;
+                }
+                I2cXferMode::BuffMode => {
+                    cmd |= AST_I2CS_RX_BUFF_EN;
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-        }
-        else if sts == AST_I2CS_RX_DONE | AST_I2CS_STOP ||
-	        sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA || 
-	        sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP ||
-	        sts == AST_I2CS_RX_DONE_NAK | AST_I2CS_RX_DONE | AST_I2CS_STOP ||
-	        sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_STOP ||
-	        sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP ||
-	        sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE_NAK | AST_I2CS_RX_DONE | AST_I2CS_STOP {
+        } else if sts == AST_I2CS_RX_DONE | AST_I2CS_STOP
+            || sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA
+            || sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP
+            || sts == AST_I2CS_RX_DONE_NAK | AST_I2CS_RX_DONE | AST_I2CS_STOP
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_STOP
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE_NAK | AST_I2CS_RX_DONE | AST_I2CS_STOP
+        {
             dbg!(self, "S: (Sw)|D|(P)\n");
             if AST_I2CS_SLAVE_MATCH == sts & AST_I2CS_SLAVE_MATCH {
                 self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
@@ -1539,24 +1537,28 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     self.i2c.i2cs4c().write(|w| unsafe { w.bits(0) });
                     self.i2c.i2cs2c().write(|w| unsafe {
-                        w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1 ) as u16)
-                        .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                        w.dmarx_buf_len_byte()
+                            .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                            .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
                     cmd |= AST_I2CS_RX_DMA_EN;
-                },
+                }
                 I2cXferMode::BuffMode => {
-                    self.copy_from_buff (I2C_BUF_SIZE as u16);
+                    self.copy_from_buff(I2C_BUF_SIZE as u16);
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     cmd |= AST_I2CS_RX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
             if AST_I2CS_STOP == sts & AST_I2CS_STOP {
                 self.i2c_slave_event_stop();
             }
-		}
-		else if sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA ||
-            sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA {
+        } else if sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA
+        {
             dbg!(self, "S: AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA\n");
             //read bit from master, slave tx to master
             //finish write request if any
@@ -1571,50 +1573,56 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdReq);
                     //LOG_DBG("tx [%02x]", data->slave_dma_buf[0]);
                     self.i2c.i2cs4c().write(|w| unsafe { w.bits(0) });
-                    self.i2c.i2cs2c().modify(|_,w| unsafe {
-                        w.dmatx_buf_len_byte().bits(0)
-                        .dmatx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                    self.i2c.i2cs2c().modify(|_, w| unsafe {
+                        w.dmatx_buf_len_byte()
+                            .bits(0)
+                            .dmatx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
-                    cmd |= AST_I2CS_TX_DMA_EN; 
-                },
-                I2cXferMode::BuffMode =>{
-                    self.copy_from_buff (I2C_BUF_SIZE as u16);
+                    cmd |= AST_I2CS_TX_DMA_EN;
+                }
+                I2cXferMode::BuffMode => {
+                    self.copy_from_buff(I2C_BUF_SIZE as u16);
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdReq);
-                    self.i2c.i2cc0c().write(|w| unsafe {
-                        w.tx_data_byte_count().bits(0)
-                    });
+                    self.i2c
+                        .i2cc0c()
+                        .write(|w| unsafe { w.tx_data_byte_count().bits(0) });
                     cmd |= AST_I2CS_TX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-        }
-	    else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_TX_DMA {
+        } else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_TX_DMA {
             //First Start read
-		    dbg!(self, "S: Sw | AST_I2CS_Wait_TX_DMA\n");
+            dbg!(self, "S: Sw | AST_I2CS_Wait_TX_DMA\n");
             cmd = SLAVE_TRIGGER_CMD;
             match self.config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
-                    self.i2c.i2cs2c().modify(|_,w| unsafe {
-                        w.dmatx_buf_len_byte().bits(0)
-                        .dmatx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                    self.i2c.i2cs2c().modify(|_, w| unsafe {
+                        w.dmatx_buf_len_byte()
+                            .bits(0)
+                            .dmatx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
                     cmd |= AST_I2CS_TX_DMA_EN;
-                },
+                }
                 I2cXferMode::BuffMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
                     self.copy_to_buff(I2C_BUF_SIZE as u16);
-                    self.i2c.i2cc0c().write(|w| unsafe {
-                        w.tx_data_byte_count().bits(0)
-                    });
+                    self.i2c
+                        .i2cc0c()
+                        .write(|w| unsafe { w.tx_data_byte_count().bits(0) });
                     cmd |= AST_I2CS_TX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-        }
-		else if sts == AST_I2CS_WAIT_TX_DMA {
+        } else if sts == AST_I2CS_WAIT_TX_DMA {
             dbg!(self, "S: AST_I2CS_Wait_TX_DMA\n");
             //it should be next start read
             cmd = SLAVE_TRIGGER_CMD;
@@ -1622,157 +1630,159 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
-                    self.i2c.i2cs2c().modify(|_,w| unsafe {
-                        w.dmatx_buf_len_byte().bits(0)
-                        .dmatx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                    self.i2c.i2cs2c().modify(|_, w| unsafe {
+                        w.dmatx_buf_len_byte()
+                            .bits(0)
+                            .dmatx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
                     cmd |= AST_I2CS_TX_DMA_EN;
-                },
-                I2cXferMode::BuffMode =>{
+                }
+                I2cXferMode::BuffMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
                     self.copy_to_buff(I2C_BUF_SIZE as u16);
                     cmd |= AST_I2CS_TX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-        }
-        else if sts == AST_I2CS_TX_NAK | AST_I2CS_STOP ||
-            sts == AST_I2CS_STOP {
+        } else if sts == AST_I2CS_TX_NAK | AST_I2CS_STOP || sts == AST_I2CS_STOP {
             if sts & AST_I2CS_TX_NAK == AST_I2CS_TX_NAK {
                 dbg!(self, "S: TX_NAK | P\n");
             } else {
                 dbg!(self, "S: P\n");
             }
-		    self.i2c_slave_event_stop();
+            self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
             match self.config.xfer_mode {
                 I2cXferMode::DmaMode => {
-                    self.i2c.i2cs2c().modify(|_,w| unsafe {
-                        w.dmarx_buf_len_byte().bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
-                        .dmarx_buf_len_wr_enbl_for_cur_cmd().set_bit()
+                    self.i2c.i2cs2c().modify(|_, w| unsafe {
+                        w.dmarx_buf_len_byte()
+                            .bits((I2C_SLAVE_BUF_SIZE - 1) as u16)
+                            .dmarx_buf_len_wr_enbl_for_cur_cmd()
+                            .set_bit()
                     });
                     cmd |= AST_I2CS_RX_DMA_EN;
-                },
+                }
                 I2cXferMode::BuffMode => {
-                    self.i2c.i2cc0c().write(|w| unsafe {
-                        w.rx_pool_buffer_size().bits(I2C_BUF_SIZE - 1)
-                    });
+                    self.i2c
+                        .i2cc0c()
+                        .write(|w| unsafe { w.rx_pool_buffer_size().bits(I2C_BUF_SIZE - 1) });
                     cmd |= AST_I2CS_RX_BUFF_EN;
-                },
-                _ => {cmd &= !AST_I2CS_PKT_MODE_EN;},
+                }
+                _ => {
+                    cmd &= !AST_I2CS_PKT_MODE_EN;
+                }
             }
-		    
-        }
-        else {
+        } else {
             dbg!(self, "TODO packet slave sts {:#x}\n", sts);
         }
         if cmd > 0 {
-            self.i2c.i2cs28().write(|w| unsafe {w.bits(cmd)});
+            self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
         }
     }
 
-    pub fn aspeed_i2c_slave_byte_irq(
-        &mut self,
-        mut sts : u32
-    ) {
-	    let mut cmd = AST_I2CS_ACTIVE_ALL;
-	    let mut byte_data = 0;
+    pub fn aspeed_i2c_slave_byte_irq(&mut self, mut sts: u32) {
+        let mut cmd = AST_I2CS_ACTIVE_ALL;
+        let mut byte_data = 0;
 
-	    dbg!(self, "enter aspeed_i2c_slave_byte_irq");
-	    if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA {
+        dbg!(self, "enter aspeed_i2c_slave_byte_irq");
+        if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA {
             dbg!(self, "S : Sw|D\n");
             // first address match is address
             byte_data = self.i2c.i2cc08().read().rx_byte_buffer().bits();
-            dbg!(self, "rx: {:#x}, addr {:#x} , R: {}", byte_data, byte_data>>1, byte_data & 0x1 );
-            // If the record address is still same, it is re-start case. 
+            dbg!(
+                self,
+                "rx: {:#x}, addr {:#x} , R: {}",
+                byte_data,
+                byte_data >> 1,
+                byte_data & 0x1
+            );
+            // If the record address is still same, it is re-start case.
             if byte_data != self.i2c_data.slave_addr_last {
                 self.i2c_slave_byte_write(I2cSEvent::SlaveWrReq, byte_data);
             }
             self.i2c_data.slave_addr_last = byte_data;
-        } 
-        else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE |
-	        AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP | AST_I2CS_TX_NAK ||
-            sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE |
-	        AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP {
+        } else if sts
+            == AST_I2CS_SLAVE_MATCH
+                | AST_I2CS_RX_DONE
+                | AST_I2CS_WAIT_RX_DMA
+                | AST_I2CS_STOP
+                | AST_I2CS_TX_NAK
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP
+        {
             dbg!(self, "S : Sw|D|P\n");
             self.i2c_slave_event_stop();
             self.i2c_data.slave_addr_last = 0;
-            // first address match is address 
+            // first address match is address
             byte_data = self.i2c.i2cc08().read().rx_byte_buffer().bits();
             dbg!(self, "data: {:#x}", byte_data);
             self.i2c_slave_byte_write(I2cSEvent::SlaveWrReq, byte_data);
             self.i2c_data.slave_addr_last = byte_data;
-        }
-        else if sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA {
+        } else if sts == AST_I2CS_RX_DONE | AST_I2CS_WAIT_RX_DMA {
             dbg!(self, "S: rD\n");
             byte_data = self.i2c.i2cc08().read().rx_byte_buffer().bits();
             dbg!(self, "data: {:#x}", byte_data);
             self.i2c_slave_byte_write(I2cSEvent::SlaveWrRecvd, byte_data);
         }
         //pending stop and start address handle
-        else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | 
-                AST_I2CS_WAIT_TX_DMA {
+        else if sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_RX_DONE | AST_I2CS_WAIT_TX_DMA {
             dbg!(self, "S : Sr|D\n");
             cmd |= AST_I2CS_TX_CMD;
             byte_data = self.i2c.i2cc08().read().rx_byte_buffer().bits();
-            dbg!(self, "rx: {:#x}, addr {:#x} , R: {}", byte_data, byte_data>>1, byte_data & 0x1 );
+            dbg!(
+                self,
+                "rx: {:#x}, addr {:#x} , R: {}",
+                byte_data,
+                byte_data >> 1,
+                byte_data & 0x1
+            );
             self.i2c_slave_byte_read(I2cSEvent::SlaveRdProc, &mut byte_data);
             dbg!(self, "data: {:#x}", byte_data);
-            self.i2c.i2cc08().modify(|_,w| {
-                unsafe { w.tx_byte_buffer().bits(byte_data) }
-            });
-        }
-        else if sts == AST_I2CS_TX_ACK | AST_I2CS_WAIT_TX_DMA {
+            self.i2c
+                .i2cc08()
+                .modify(|_, w| unsafe { w.tx_byte_buffer().bits(byte_data) });
+        } else if sts == AST_I2CS_TX_ACK | AST_I2CS_WAIT_TX_DMA {
             dbg!(self, "S: tD\n");
-		    cmd |= AST_I2CS_TX_CMD;
-		    self.i2c_slave_byte_read(I2cSEvent::SlaveRdProc, &mut byte_data);
+            cmd |= AST_I2CS_TX_CMD;
+            self.i2c_slave_byte_read(I2cSEvent::SlaveRdProc, &mut byte_data);
             dbg!(self, "data: {:#x}", byte_data);
-            self.i2c.i2cc08().modify(|_,w| {
-                unsafe { w.tx_byte_buffer().bits(byte_data) }
-            });
-        }
-	    else if sts == AST_I2CS_STOP || 
-	        sts ==  AST_I2CS_STOP | AST_I2CS_TX_NAK ||
-            sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_STOP | AST_I2CS_TX_NAK ||
-	        sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_RX_DMA | 
-                AST_I2CS_STOP | AST_I2CS_TX_NAK {
+            self.i2c
+                .i2cc08()
+                .modify(|_, w| unsafe { w.tx_byte_buffer().bits(byte_data) });
+        } else if sts == AST_I2CS_STOP
+            || sts == AST_I2CS_STOP | AST_I2CS_TX_NAK
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_STOP | AST_I2CS_TX_NAK
+            || sts == AST_I2CS_SLAVE_MATCH | AST_I2CS_WAIT_RX_DMA | AST_I2CS_STOP | AST_I2CS_TX_NAK
+        {
             dbg!(self, "S : P\n");
             self.i2c_slave_event_stop();
             //clear recorded slave address
             self.i2c_data.slave_addr_last = 0;
             if AST_I2CS_SLAVE_MATCH == sts & AST_I2CS_SLAVE_MATCH {
-			    //Don't handle this match for current condition
-			    sts &= !AST_I2CS_SLAVE_MATCH;
+                //Don't handle this match for current condition
+                sts &= !AST_I2CS_SLAVE_MATCH;
             }
-            if AST_I2CS_WAIT_RX_DMA == sts & AST_I2CS_WAIT_RX_DMA  {
-			    //Don't handle this waiting for current condition
-			    sts &= !AST_I2CS_WAIT_RX_DMA;
-		    }
+            if AST_I2CS_WAIT_RX_DMA == sts & AST_I2CS_WAIT_RX_DMA {
+                //Don't handle this waiting for current condition
+                sts &= !AST_I2CS_WAIT_RX_DMA;
+            }
         } else {
-             dbg!(self, "TODO byte slave sts {:#x}\n", sts);
+            dbg!(self, "TODO byte slave sts {:#x}\n", sts);
         }
-        self.i2c.i2cs28().write(|w| unsafe {w.bits(cmd)});
-        self.i2c.i2cs24().write(|w | {
-            unsafe { w.bits(sts) }
-        });
+        self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
+        self.i2c.i2cs24().write(|w| unsafe { w.bits(sts) });
         self.i2c.i2cs24().read().bits();
     }
 
-    pub fn write(
-        &mut self, 
-        addr: SevenBitAddress, 
-        bytes: &[u8]
-    ) -> Result<(), Error> {
-        self.prepare_write (addr, &bytes,true);
+    pub fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Error> {
+        self.prepare_write(addr, &bytes, true);
         return self.i2c_aspeed_transfer();
     }
 
-    pub fn read(
-        &mut self, 
-        addr: SevenBitAddress, 
-        buffer: &mut [u8]
-    ) -> Result<(), Error> {
-        self.prepare_read (addr,buffer.len() as u32);
+    pub fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Error> {
+        self.prepare_read(addr, buffer.len() as u32);
         let result: Result<(), Error> = self.i2c_aspeed_transfer();
         if result == Ok(()) {
             self.read_processed(buffer);
@@ -1780,7 +1790,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         return result;
     }
 
-    //write data first to the i2c device at address 
+    //write data first to the i2c device at address
     //before performing the read into the buffer
     pub fn write_read(
         &mut self,
@@ -1788,23 +1798,22 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         bytes: &[u8],
         buffer: &mut [u8],
     ) -> Result<(), Error> {
-
         let mut result = Ok(());
-        self.prepare_write (addr, &bytes, false);
-       
+        self.prepare_write(addr, &bytes, false);
+
         result = self.i2c_aspeed_transfer();
         if result != Ok(()) {
             return result;
         }
         //read
-        self.prepare_read (addr,buffer.len() as u32);
-        result= self.i2c_aspeed_transfer();
+        self.prepare_read(addr, buffer.len() as u32);
+        result = self.i2c_aspeed_transfer();
         if result == Ok(()) {
             self.read_processed(buffer);
         }
         return result;
     }
-   
+
     pub fn transaction<'b>(
         &mut self,
         addr: SevenBitAddress,
@@ -1813,8 +1822,8 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         if let Some(mut prev_op) = ops.next() {
             // 1. Generate Start for operation
             match &prev_op {
-                Operation::Read(_) => {},
-                Operation::Write(_) => {},
+                Operation::Read(_) => {}
+                Operation::Write(_) => {}
             };
 
             for op in ops {
@@ -1860,7 +1869,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     }
 }
 
-impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::I2c for I2cController<'_,I2C,I2CT> {
+impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::I2c for I2cController<'_, I2C, I2CT> {
     fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error> {
         self.read(addr, buffer)
     }
@@ -1925,5 +1934,3 @@ macro_rules! transaction_impl {
     };
 }
 use transaction_impl;
-
-
