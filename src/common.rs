@@ -38,7 +38,7 @@ impl<const N: usize> DmaBuffer<N> {
     }
 
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         N
     }
 
