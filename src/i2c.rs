@@ -341,6 +341,17 @@ pub struct I2cController<'a, I2C: Instance, I2CT: I2CTarget> {
     _marker: PhantomData<I2C>,
     pub dbg_uart: Option<&'a mut UartController<'a>>,
 }
+impl<I2C: Instance, I2CT: I2CTarget> Drop for I2cController<'_, I2C, I2CT> {
+    fn drop(&mut self) {
+        // Disable i2c controller
+        self.i2c.i2cc00().write(|w| unsafe {w.bits(0)});
+        // Disable interrupt and clear interrupt status
+        self.i2c.i2cm10().write(|w| unsafe {w.bits(0)});
+        self.i2c.i2cm14().write(|w| unsafe {w.bits(0xffff_ffff)});
+        self.i2c.i2cs20().write(|w| unsafe {w.bits(0)});
+        self.i2c.i2cs24().write(|w| unsafe {w.bits(0xffff_ffff)});
+    }
+}
 macro_rules! dbg {
     ($self:expr, $($arg:tt)*) => {
         if let Some(ref mut uart) = $self.dbg_uart {

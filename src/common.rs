@@ -27,7 +27,7 @@ impl<const N: usize> DmaBuffer<N> {
         self.buf.as_mut_ptr()
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         N
     }
 
