@@ -18,6 +18,7 @@ use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
 use aspeed_ddk::tests::functional::hmac_test::run_hmac_tests;
 use aspeed_ddk::tests::functional::ecdsa_test::run_ecdsa_tests;
 use aspeed_ddk::tests::functional::rsa_test::run_rsa_tests;
+use aspeed_ddk::tests::functional::i2c_test;
 use panic_halt as _;
 
 use cortex_m_rt::entry;
@@ -139,7 +140,9 @@ fn main() -> ! {
 
     writeln!(uart_controller, "\r\nHello, world!!\r\n").unwrap();
 
-
+    //i2c_test::test_i2c_master(&mut uart_controller);
+    i2c_test::test_i2c_slave(&mut uart_controller);
+    /*
     // Enable HACE (Hash and Crypto Engine)
     let delay = DummyDelay::default();
     let mut syscon = SysCon::new(delay.clone(), scu);
@@ -158,7 +161,7 @@ fn main() -> ! {
     let mut rsa = AspeedRsa::new(&secure, delay);
     run_rsa_tests(&mut uart_controller, &mut rsa);
 
-    test_wdt(&mut uart_controller);
+    test_wdt(&mut uart_controller);*/
     // Initialize the peripherals here if needed
     loop {}
 }
