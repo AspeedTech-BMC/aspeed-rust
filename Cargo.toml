@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 std = []
+i2c_target = []
 
 
 [dependencies]
