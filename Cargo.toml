@@ -17,6 +17,7 @@ edition = "2021"
 [features]
 default = []
 std = []
+i2c_target = []
 test-rsa = []
 test-ecdsa = []
 test-hmac = []
