@@ -37,11 +37,20 @@ unsafe fn pre_init() {
     reg |= 0x1f << 25;
     write_volatile(jtag_pinmux_offset as *mut u32, reg);
 
+    // Disable Cache
     let cache_ctrl_offset: u32 = 0x7e6e2a58;
     write_volatile(cache_ctrl_offset as *mut u32, 0);
+
+    // Configure Cache Area and Invalidation
     let cache_area_offset: u32 = 0x7e6e2a50;
-    let cache_val = 0x0003_ffff;
+    let cache_val = 0x000f_ffff;
     write_volatile(cache_area_offset as *mut u32, cache_val);
+
+    let cache_inval_offset: u32 = 0x7e6e2a54;
+    let cache_inval_val = 0x8660_0000;
+    write_volatile(cache_inval_offset as *mut u32, cache_inval_val);
+
+    // Enable Cache
     write_volatile(cache_ctrl_offset as *mut u32, 1);
 }
 
