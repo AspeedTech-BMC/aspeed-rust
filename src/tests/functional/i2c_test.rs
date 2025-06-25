@@ -50,7 +50,7 @@ impl ReadTarget for DummyI2CTarget {
         for i in 0..buffer.len() {
             buffer[i] = self.buffer[i];
         }
-        Ok(())
+        Ok(buffer.len())
     }
 }
 
@@ -70,7 +70,7 @@ impl RegisterAccess for DummyI2CTarget {
         Ok(())
     }
     fn read_register(&mut self, address: u8, buffer: &mut [u8]) -> Result<usize, Self::Error> {
-        Ok((1))
+        Ok(1)
     }
 }
 
