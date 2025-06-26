@@ -1,7 +1,7 @@
 use crate::pinctrl;
 use crate::uart::{self, Config, UartController};
 use crate::common::DummyDelay;
-use crate::i2c::{self, I2cController};
+use crate::i2c::{self, I2cConfigBuilder, I2cController};
 use ast1060_pac::Peripherals;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::ErrorKind;
@@ -88,21 +88,18 @@ pub fn test_i2c_master(uart:&mut UartController<'_>) {
             stop_bits: uart::StopBits::One,
             clock: 24_000_000,
         });
-    }    
-    let mut i2c1: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c1, i2c::I2cConfig{
-        xfer_mode: i2c::I2cXferMode::DmaMode,
-        multi_master: true,
-        smbus_timeout: true,
-        manual_scl_high: 0,
-        manual_scl_low: 0,
-        manual_sda_hold: 0,
-        smbus_alert: false,
-        clk_src: 0, // will be updated in driver
-        mode: i2c::Mode::Standard,
-    }, Some(&mut dbg_uart));
+    }
+    let i2c_config = I2cConfigBuilder::new()
+        .xfer_mode(i2c::I2cXferMode::DmaMode)
+        .multi_master(true)
+        .smbus_timeout(true)
+        .smbus_alert(false)
+        .speed(i2c::I2cSpeed::Standard)
+        .build();
+    let mut i2c1: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c1, i2c_config, Some(&mut dbg_uart));
     
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_I2C1);
-    i2c1.i2c_init();
+    i2c1.init();
     
     let addr = 0x2e; //device ADT7490
     let mut buf = [0x4e];
@@ -170,21 +167,18 @@ pub fn test_i2c_slave(uart:&mut UartController<'_>) {
             clock: 24_000_000,
         });
     }
+    let i2c_config = I2cConfigBuilder::new()
+        .xfer_mode(i2c::I2cXferMode::DmaMode)
+        .multi_master(true)
+        .smbus_timeout(true)
+        .smbus_alert(false)
+        .speed(i2c::I2cSpeed::Standard)
+        .build();
     //i2c2 as slave
-    let mut i2c2: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c2, i2c::I2cConfig{
-        xfer_mode: i2c::I2cXferMode::DmaMode,
-        multi_master: true,
-        smbus_timeout: true,
-        manual_scl_high: 0,
-        manual_scl_low: 0,
-        manual_sda_hold: 0,
-        smbus_alert: false,
-        clk_src: 0, // will be updated in driver
-        mode: i2c::Mode::Standard,
-    }, Some(&mut dbg_uart));
+    let mut i2c2: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c2, i2c_config, Some(&mut dbg_uart));
     
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_I2C2);
-    i2c2.i2c_init();
+    i2c2.init();
     
     match i2c2.i2c_aspeed_slave_register(0x42, None) {
         Ok(val) => {writeln!(uart, "i2c slave register ok: {:?}\r", val).unwrap();},

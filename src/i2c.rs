@@ -13,7 +13,7 @@ static I2CGLOBAL_INIT: AtomicBool = AtomicBool::new(false);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
-pub enum Mode {
+pub enum I2cSpeed {
     Standard = 100_000,
     Fast = 400_000,
     FastPlus = 1_000_000,
@@ -249,16 +249,77 @@ impl embedded_hal::i2c::Error for Error {
     }
 }
 
+pub struct TimingConfig {
+    pub manual_scl_high: u8,
+    pub manual_scl_low: u8,
+    pub manual_sda_hold: u8,
+    pub clk_src: u32,
+}
 pub struct I2cConfig {
     pub xfer_mode: I2cXferMode,
     pub multi_master: bool,
     pub smbus_timeout: bool,
-    pub manual_scl_high: u8,
-    pub manual_scl_low: u8,
-    pub manual_sda_hold: u8,
     pub smbus_alert: bool,
-    pub clk_src: u32,
-    pub mode: Mode,
+    pub timing_config: TimingConfig,
+    pub speed: I2cSpeed,
+}
+pub struct I2cConfigBuilder {
+    xfer_mode: I2cXferMode,
+    multi_master: bool,
+    smbus_timeout: bool,
+    smbus_alert: bool,
+    timing_config: Option<TimingConfig>,
+    speed: I2cSpeed,
+}
+impl I2cConfigBuilder {
+    pub fn new() -> Self {
+        Self {
+            xfer_mode: I2cXferMode::ByteMode,
+            multi_master: false,
+            smbus_alert: false,
+            smbus_timeout: false,
+            timing_config: None,
+            speed: I2cSpeed::Standard,
+        }
+    }
+    pub fn xfer_mode(mut self, mode: I2cXferMode) -> Self {
+        self.xfer_mode = mode;
+        self
+    }
+    pub fn multi_master(mut self, enabled: bool) -> Self {
+        self.multi_master = enabled;
+        self
+    }
+    pub fn smbus_alert(mut self, enabled: bool) -> Self {
+        self.smbus_alert = enabled;
+        self
+    }
+    pub fn smbus_timeout(mut self, enabled: bool) -> Self {
+        self.smbus_timeout = enabled;
+        self
+    }
+    pub fn speed(mut self, speed: I2cSpeed) -> Self {
+        self.speed = speed;
+        self
+    }
+    pub fn timing_config(mut self, config: TimingConfig) -> Self {
+        self.timing_config = Some(config);
+        self
+    }
+    pub fn build(self) -> I2cConfig {
+        I2cConfig { 
+            xfer_mode: self.xfer_mode,
+            multi_master: self.multi_master,
+            smbus_timeout: self.smbus_timeout,
+            smbus_alert: self.smbus_alert,
+            timing_config: self.timing_config.unwrap_or(TimingConfig { 
+                manual_scl_high: 0,
+                manual_scl_low: 0,
+                manual_sda_hold: 0,
+                clk_src: 0, 
+            }),
+            speed: self.speed }
+    }
 }
 
 const I2C_TOTAL: usize = 4;
@@ -334,7 +395,7 @@ impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for I2cControl
 pub struct I2cController<'a, I2C: Instance, I2CT: I2CTarget> {
     pub i2c: &'static ast1060_pac::i2c::RegisterBlock,
     pub i2c_buff: &'static ast1060_pac::i2cbuff::RegisterBlock,
-    pub config: I2cConfig,
+    pub i2c_config: I2cConfig,
     pub mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE>,
     pub sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE>,
     pub i2c_data: I2cData<'a, I2CT>,
@@ -371,7 +432,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         Self {
             i2c: i2c,
             i2c_buff: i2c_buff,
-            config: config,
+            i2c_config: config,
             mdma_buf: mdma_buf,
             sdma_buf: sdma_buf,
             i2c_data: i2c_data,
@@ -416,7 +477,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         dbg!(self, "**************************");
     }
 
-    pub fn i2c_init(&mut self) {
+    pub fn init(&mut self) {
         dbg!(self, "i2c init");
         dbg!(
             self,
@@ -467,7 +528,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
         // i2c reset
         self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
-        if !self.config.multi_master {
+        if !self.i2c_config.multi_master {
             self.i2c
                 .i2cc00()
                 .write(|w| w.dis_multimaster_capability_for_master_fn_only().set_bit());
@@ -480,9 +541,9 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         });
 
         // set AC timing
-        self.config.clk_src =
+        self.i2c_config.timing_config.clk_src =
             HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
-        dbg!(self, "clk_src {}", self.config.clk_src);
+        dbg!(self, "clk_src {}", self.i2c_config.timing_config.clk_src);
         self.select_i2c_clock();
         // clear interrupts
         self.i2c.i2cm14().write(|w| unsafe { w.bits(0xffffffff) });
@@ -498,7 +559,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             "i2c init after set interrupt: {:#x}",
             self.i2c.i2cm14().read().bits()
         );
-        if self.config.smbus_alert {
+        if self.i2c_config.smbus_alert {
             self.i2c
                 .i2cm10()
                 .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
@@ -508,7 +569,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             dbg!(self, "i2c target enabled");
             // clear slave interrupts
             self.i2c.i2cs24().write(|w| unsafe { w.bits(0xffffffff) });
-            if self.config.xfer_mode == I2cXferMode::ByteMode {
+            if self.i2c_config.xfer_mode == I2cXferMode::ByteMode {
                 self.i2c.i2cs20().write(|w| unsafe { w.bits(0xffff) });
             } else {
                 self.i2c.i2cs20().write(|w| {
@@ -527,44 +588,44 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let mut divider_ratio: u32;
 
         if p.i2cg0c().read().clk_divider_mode_sel().bit_is_set() {
-            let base_clk = self.config.clk_src;
-            let base_clk1 = (self.config.clk_src * 10)
+            let base_clk = self.i2c_config.timing_config.clk_src;
+            let base_clk1 = (self.i2c_config.timing_config.clk_src * 10)
                 / ((p.i2cg10().read().base_clk1divisor_basedivider1().bits() as u32 + 2) * 10 / 2);
-            let base_clk2 = (self.config.clk_src * 10)
+            let base_clk2 = (self.i2c_config.timing_config.clk_src * 10)
                 / ((p.i2cg10().read().base_clk2divisor_basedivider2().bits() as u32 + 2) * 10 / 2);
-            let base_clk3 = (self.config.clk_src * 10)
+            let base_clk3 = (self.i2c_config.timing_config.clk_src * 10)
                 / ((p.i2cg10().read().base_clk3divisor_basedivider3().bits() as u32 + 2) * 10 / 2);
-            let base_clk4 = (self.config.clk_src * 10)
+            let base_clk4 = (self.i2c_config.timing_config.clk_src * 10)
                 / ((p.i2cg10().read().base_clk4divisor_basedivider4().bits() as u32 + 2) * 10 / 2);
 
             // rounding
-            if self.config.clk_src / (self.config.mode as u32) <= 32 {
+            if self.i2c_config.timing_config.clk_src / (self.i2c_config.speed as u32) <= 32 {
                 div = 0;
-                divider_ratio = base_clk / self.config.mode as u32;
-                if base_clk / divider_ratio > self.config.mode as u32 {
+                divider_ratio = base_clk / self.i2c_config.speed as u32;
+                if base_clk / divider_ratio > self.i2c_config.speed as u32 {
                     divider_ratio += 1;
                 }
-            } else if base_clk1 / (self.config.mode as u32) <= 32 {
+            } else if base_clk1 / (self.i2c_config.speed as u32) <= 32 {
                 div = 1;
-                divider_ratio = base_clk1 / self.config.mode as u32;
-                if base_clk1 / divider_ratio > self.config.mode as u32 {
+                divider_ratio = base_clk1 / self.i2c_config.speed as u32;
+                if base_clk1 / divider_ratio > self.i2c_config.speed as u32 {
                     divider_ratio += 1;
                 }
-            } else if base_clk2 / (self.config.mode as u32) <= 32 {
+            } else if base_clk2 / (self.i2c_config.speed as u32) <= 32 {
                 div = 2;
-                divider_ratio = base_clk2 / self.config.mode as u32;
-                if base_clk2 / divider_ratio > self.config.mode as u32 {
+                divider_ratio = base_clk2 / self.i2c_config.speed as u32;
+                if base_clk2 / divider_ratio > self.i2c_config.speed as u32 {
                     divider_ratio += 1;
                 }
-            } else if base_clk3 / (self.config.mode as u32) <= 32 {
+            } else if base_clk3 / (self.i2c_config.speed as u32) <= 32 {
                 div = 3;
-                divider_ratio = base_clk3 / self.config.mode as u32;
-                if base_clk3 / divider_ratio > self.config.mode as u32 {
+                divider_ratio = base_clk3 / self.i2c_config.speed as u32;
+                if base_clk3 / divider_ratio > self.i2c_config.speed as u32 {
                     divider_ratio += 1;
                 }
             } else {
                 div = 4;
-                divider_ratio = base_clk4 / self.config.mode as u32;
+                divider_ratio = base_clk4 / self.i2c_config.speed as u32;
                 let mut inc = 0;
                 while divider_ratio + inc > 32 {
                     inc |= divider_ratio & 1u32;
@@ -572,7 +633,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     div += 1;
                 }
                 divider_ratio += inc;
-                if base_clk4 / divider_ratio > self.config.mode as u32 {
+                if base_clk4 / divider_ratio > self.i2c_config.speed as u32 {
                     divider_ratio += 1;
                 }
                 divider_ratio = min(divider_ratio, 32);
@@ -581,15 +642,15 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
             let mut scl_low: u8;
             let mut scl_high: u8;
-            if (self.config.manual_scl_low & self.config.manual_scl_high) != 0 {
-                scl_low = self.config.manual_scl_low;
-                scl_high = self.config.manual_scl_high;
-            } else if (self.config.manual_scl_low | self.config.manual_scl_high) != 0 {
-                if self.config.manual_scl_low != 0 {
-                    scl_low = self.config.manual_scl_low;
+            if (self.i2c_config.timing_config.manual_scl_low & self.i2c_config.timing_config.manual_scl_high) != 0 {
+                scl_low = self.i2c_config.timing_config.manual_scl_low;
+                scl_high = self.i2c_config.timing_config.manual_scl_high;
+            } else if (self.i2c_config.timing_config.manual_scl_low | self.i2c_config.timing_config.manual_scl_high) != 0 {
+                if self.i2c_config.timing_config.manual_scl_low != 0 {
+                    scl_low = self.i2c_config.timing_config.manual_scl_low;
                     scl_high = divider_ratio as u8 - scl_low - 2;
                 } else {
-                    scl_high = self.config.manual_scl_high;
+                    scl_high = self.i2c_config.timing_config.manual_scl_high;
                     scl_low = divider_ratio as u8 - scl_high - 2;
                 }
             } else {
@@ -616,7 +677,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                     .bits(scl_high - 1)
             });
 
-            if self.config.smbus_timeout {
+            if self.i2c_config.smbus_timeout {
                 self.i2c.i2cc04().write(|w| unsafe {
                     w.timeout_base_clk_divisor_tout_base_clk()
                         .bits(2)
@@ -624,10 +685,10 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                         .bits(8)
                 });
             }
-            if self.config.manual_sda_hold < 4 {
+            if self.i2c_config.timing_config.manual_sda_hold < 4 {
                 self.i2c.i2cc04().write(|w| unsafe {
                     w.hold_time_of_masterslave_data_thddat()
-                        .bits(self.config.manual_sda_hold)
+                        .bits(self.i2c_config.timing_config.manual_sda_hold)
                 });
             }
         }
@@ -652,7 +713,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let xfer_len: u16;
 
         let msg_len = self.i2c_data.msg.length;
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmatx_actual_len_byte().bits() as u16;
             }
@@ -730,7 +791,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let xfer_len: u16;
         let msg_len = self.i2c_data.msg.length;
         dbg!(self, "do_i2cm_rx");
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmarx_actual_len_byte().bits();
                 dbg!(self, "dma data: {:#x}", unsafe { *self.mdma_buf.as_ptr() });
@@ -899,7 +960,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     //copy data
     pub fn read_processed(&mut self, buffer: &mut [u8]) {
         dbg!(self, "read_processed");
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 let src = self
                     .mdma_buf
@@ -924,7 +985,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c_data.cmd_err = CmdErr::NoErr;
         self.i2c_data.completion = false;
         self.i2c_data.master_xfer_cnt = 0;
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 let dest = &mut self.mdma_buf.as_mut_slice(0, bytes.len() as usize);
                 dest.copy_from_slice(bytes);
@@ -944,7 +1005,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let msg_len = self.i2c_data.msg.length;
         dbg!(self, "aspeed_i2c_read");
         cmd |= AST_I2CM_RX_CMD;
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
                 if len_left > ASPEED_I2C_DMA_SIZE as u32 {
@@ -1014,7 +1075,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
         dbg!(self, "aspeed_i2c_write");
         cmd |= AST_I2CM_TX_CMD;
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 //dma mode
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
@@ -1122,7 +1183,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let mut cmd: u32;
 
         //If bus is busy in a single master environment, attempt recovery
-        if !self.config.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
+        if !self.i2c_config.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
             if !self.aspeed_new_i2c_recover_bus() {
                 return Err(Error::Bus);
             }
@@ -1144,7 +1205,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 if cfg!(feature = "i2c_target") {
                     cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
                     if ctrl & AST_I2CC_SLAVE_EN == AST_I2CC_SLAVE_EN {
-                        match self.config.xfer_mode {
+                        match self.i2c_config.xfer_mode {
                             I2cXferMode::DmaMode => {
                                 cmd |= AST_I2CS_RX_DMA_EN;
                                 self.i2c.i2cs3c().write(|w| unsafe {
@@ -1216,7 +1277,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 .bit(true)
         });
         // trigger rx buffer
-        match self.config.xfer_mode {
+        match self.i2c_config.xfer_mode {
             I2cXferMode::DmaMode => {
                 cmd |= AST_I2CS_RX_DMA_EN;
                 let slave_dma_addr = self.sdma_buf.as_mut_ptr() as u32;
@@ -1295,7 +1356,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             //Turn on slave mode
             self.i2c.i2cc00().modify(|_, w| w.enbl_slave_fn().bit(true));
         }
-        if self.config.xfer_mode == I2cXferMode::ByteMode {
+        if self.i2c_config.xfer_mode == I2cXferMode::ByteMode {
             //Clear irq and re-send slave trigger command
             cmd = AST_I2CS_ACTIVE_ALL;
             self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
@@ -1374,7 +1435,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         } else if event == I2cSEvent::SlaveRdProc {
             dbg!(self, "read_processed");
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     let tx_len = self.i2c.i2cs4c().read().dmatx_actual_len_byte().bits();
                     dbg!(self, "dma tx_len {:#x}", tx_len);
@@ -1416,7 +1477,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         } else if event == I2cSEvent::SlaveWrRecvd {
             //Another I2C master has sent a byte to us which needs to be set in ‘val’
             //bus driver delivers received byte
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     let slave_rx_len = self.i2c.i2cs4c().read().dmarx_actual_len_byte().bits();
                     dbg!(self, "dma write_received: len={:#x}", slave_rx_len);
@@ -1494,7 +1555,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         {
             dbg!(self, "S: Sw|D - issue rx\n");
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
@@ -1519,7 +1580,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             dbg!(self, "S : Sw | P\n");
             self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     cmd |= AST_I2CS_RX_DMA_EN;
                 }
@@ -1543,7 +1604,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
             }
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     self.i2c.i2cs4c().write(|w| unsafe { w.bits(0) });
@@ -1577,7 +1638,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
             }
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     //read request
@@ -1609,7 +1670,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             //First Start read
             dbg!(self, "S: Sw | AST_I2CS_Wait_TX_DMA\n");
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
@@ -1637,7 +1698,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             dbg!(self, "S: AST_I2CS_Wait_TX_DMA\n");
             //it should be next start read
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
@@ -1666,7 +1727,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
             self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
-            match self.config.xfer_mode {
+            match self.i2c_config.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c.i2cs2c().modify(|_, w| unsafe {
                         w.dmarx_buf_len_byte()
