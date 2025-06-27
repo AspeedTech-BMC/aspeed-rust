@@ -1,7 +1,8 @@
 use crate::pinctrl;
 use crate::uart::{self, Config, UartController};
 use crate::common::DummyDelay;
-use crate::i2c::i2ccontroller::{I2cConfigBuilder, I2cController, I2cSpeed, I2cXferMode};
+use crate::i2c::ast1060_i2c::I2cController;
+use crate::i2c::common::{I2cSpeed, I2cXferMode, I2cConfigBuilder};
 use ast1060_pac::Peripherals;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::ErrorKind;
