@@ -1,7 +1,7 @@
 use crate::pinctrl;
 use crate::uart::{self, Config, UartController};
 use crate::common::DummyDelay;
-use crate::i2c::{self, I2cConfigBuilder, I2cController};
+use crate::i2c::i2ccontroller::{I2cConfigBuilder, I2cController, I2cSpeed, I2cXferMode};
 use ast1060_pac::Peripherals;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::ErrorKind;
@@ -90,11 +90,11 @@ pub fn test_i2c_master(uart:&mut UartController<'_>) {
         });
     }
     let i2c_config = I2cConfigBuilder::new()
-        .xfer_mode(i2c::I2cXferMode::DmaMode)
+        .xfer_mode(I2cXferMode::DmaMode)
         .multi_master(true)
         .smbus_timeout(true)
         .smbus_alert(false)
-        .speed(i2c::I2cSpeed::Standard)
+        .speed(I2cSpeed::Standard)
         .build();
     let mut i2c1: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c1, i2c_config, Some(&mut dbg_uart));
     
@@ -168,11 +168,11 @@ pub fn test_i2c_slave(uart:&mut UartController<'_>) {
         });
     }
     let i2c_config = I2cConfigBuilder::new()
-        .xfer_mode(i2c::I2cXferMode::DmaMode)
+        .xfer_mode(I2cXferMode::DmaMode)
         .multi_master(true)
         .smbus_timeout(true)
         .smbus_alert(false)
-        .speed(i2c::I2cSpeed::Standard)
+        .speed(I2cSpeed::Standard)
         .build();
     //i2c2 as slave
     let mut i2c2: I2cController<_, DummyI2CTarget> = I2cController::new(_peripherals.i2c2, i2c_config, Some(&mut dbg_uart));
