@@ -191,29 +191,18 @@ impl<'a> I2cMsg<'a> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CmdErr {
-    NoErr = 0,
-    ErrBusRecovery = 1,
-    ErrProt = 2,
-    ErrTimeout = 3,
-    ErrBusy = 4,
-    ErrArbLoss = 5,
-    ErrAbnormal = 6,
-    ErrNXIO = 7,
-}
-
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[non_exhaustive]
 pub enum Error {
     Overrun,
     NoAcknowledge(NoAcknowledgeSource),
     Timeout,
-    // Note: The Bus error type is not currently returned, but is maintained for compatibility.
+    BusRecoveryFailed,
     Bus,
+    Busy,
     Invalid,
     Proto,
+    Abnormal,
     ArbitrationLoss,
 }
 
@@ -244,7 +233,7 @@ impl embedded_hal::i2c::Error for Error {
             Self::Bus => ErrorKind::Bus,
             Self::ArbitrationLoss => ErrorKind::ArbitrationLoss,
             Self::NoAcknowledge(nack) => ErrorKind::NoAcknowledge(nack),
-            Self::Invalid | Self::Timeout | Self::Proto => ErrorKind::Other,
+            Self::Invalid | Self::Timeout | Self::Proto | Self::Abnormal | Self::Busy | Self::BusRecoveryFailed => ErrorKind::Other,
         }
     }
 }
@@ -346,7 +335,6 @@ pub struct I2cData<'a, I2CT: I2CTarget> {
     pub stop: bool,
     pub alert_enable: bool,
     pub bus_recover: u8,
-    pub cmd_err: CmdErr,
     pub completion: bool,
     pub master_xfer_cnt: u32,
     pub slave_attached: bool,
@@ -371,7 +359,6 @@ impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
                 stop: false,
                 alert_enable: false,
                 bus_recover: 0,
-                cmd_err: CmdErr::NoErr,
                 completion: false,
                 master_xfer_cnt: 0,
                 slave_attached: false,
@@ -693,17 +680,17 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         }
     }
-    pub fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> CmdErr {
+    pub fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> Result<(), Error> {
         if irq_status & AST_I2CM_ARBIT_LOSS > 0 {
-            return CmdErr::ErrArbLoss;
+            return Err(Error::ArbitrationLoss);
         }
         if irq_status & (AST_I2CM_SDA_DL_TO | AST_I2CM_SCL_LOW_TO) > 0 {
-            return CmdErr::ErrBusy;
+            return Err(Error::Busy);
         }
         if irq_status & (AST_I2CM_ABNORMAL) > 0 {
-            return CmdErr::ErrAbnormal;
+            return Err(Error::Abnormal);
         }
-        CmdErr::NoErr
+        Ok(())
     }
     //Check if current message is completed
     //If not, continue TX
@@ -823,14 +810,14 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         }
     }
 
-    pub fn aspeed_i2c_master_package_irq(&mut self, sts: u32) {
+    pub fn aspeed_i2c_master_package_irq(&mut self, sts: u32) -> Result<(), Error> {
         dbg!(self, "aspeed_i2c_master_package_irq sts={:#x}", sts);
         if sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK
             || sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK | AST_I2CM_NORMAL_STOP
         {
             dbg!(self, "M: PKT ERR | TX NAK (STOP)");
-            self.i2c_data.cmd_err = CmdErr::ErrNXIO;
             self.i2c_data.completion = true;
+            return Err(Error::NoAcknowledge(NoAcknowledgeSource::Unknown));
         } else if sts == AST_I2CM_NORMAL_STOP {
             dbg!(self, "M: STOP");
             self.i2c_data.completion = true;
@@ -862,9 +849,10 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 sts
             );
         }
+        Ok(())
     }
 
-    pub fn aspeed_i2c_master_irq(&mut self) -> u32 {
+    pub fn aspeed_i2c_master_irq(&mut self) -> Result<(), Error> {
         let mut sts = self.i2c.i2cm14().read().bits();
         //dbg!(self, "aspeed_i2c_master_irq: sts={:#x}",sts);
         if self.i2c_data.alert_enable {
@@ -873,17 +861,15 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         if AST_I2CM_BUS_RECOVER_FAIL == AST_I2CM_BUS_RECOVER_FAIL & sts {
             self.i2c.i2cm14().write(|w| unsafe { w.bits(sts) });
             if self.i2c_data.bus_recover > 0 {
-                self.i2c_data.cmd_err = CmdErr::ErrBusRecovery;
                 self.i2c_data.bus_recover = 0;
             }
-            return 1;
+            return Err(Error::BusRecoveryFailed);
         }
         if AST_I2CM_BUS_RECOVER == AST_I2CM_BUS_RECOVER & sts {
             self.i2c
                 .i2cm14()
                 .write(|w| w.wcbus_recover_fail_sts().set_bit());
-            self.i2c_data.cmd_err = CmdErr::NoErr;
-            return 1;
+            return Ok(());
         }
         if AST_I2CM_SMBUS_ALT == AST_I2CM_SMBUS_ALT & sts {
             sts &= !AST_I2CM_SMBUS_ALT;
@@ -897,30 +883,31 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 .i2cm14()
                 .modify(|_, w| w.wcsmbus_dev_alert_intsts().bit(true));
         }
-        self.i2c_data.cmd_err = self.aspeed_i2c_is_irq_error(sts);
-        if self.i2c_data.cmd_err != CmdErr::NoErr {
-            self.i2c.i2cm14().modify(|_, w| {
-                w.wcpkt_cmd_done_intsts()
-                    .bit(true)
-                    .wcpkt_cmd_fail_intsts()
-                    .bit(true)
-            });
-            self.i2c_data.completion = true;
-            return 1;
+        match self.aspeed_i2c_is_irq_error(sts) {
+            Ok(v) => {},
+            Err(e) => {
+                self.i2c.i2cm14().modify(|_, w| {
+                    w.wcpkt_cmd_done_intsts()
+                        .bit(true)
+                        .wcpkt_cmd_fail_intsts()
+                        .bit(true)
+                });
+                self.i2c_data.completion = true;
+                return Err(e);
+            },
         }
         if AST_I2CM_PKT_DONE == AST_I2CM_PKT_DONE & sts {
             sts &= !AST_I2CM_PKT_DONE;
             self.i2c
                 .i2cm14()
                 .modify(|_, w| w.wcpkt_cmd_done_intsts().bit(true));
-            self.aspeed_i2c_master_package_irq(sts);
-            return 1;
+            return self.aspeed_i2c_master_package_irq(sts);
         }
         if sts > 0 {
             dbg!(self, "aspeed_i2c_master_irq left sts={:#x}", sts);
             self.i2c.i2cm14().write(|w| unsafe { w.bits(sts) });
         }
-        0
+        Ok(())
     }
 
     pub fn aspeed_i2c_isr(&mut self) {
@@ -933,17 +920,21 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.aspeed_i2c_master_irq();
     }
 
-    pub fn i2c_wait_completion(&mut self) {
+    pub fn i2c_wait_completion(&mut self) -> Result<(), Error>{
         let mut delay = DummyDelay {};
         let mut timeout = 1_000_000;
         while timeout > 0 && !self.i2c_data.completion {
-            self.aspeed_i2c_master_irq();
+            match self.aspeed_i2c_master_irq() {
+                Ok(_v) => {},
+                Err(e) => return Err(e),
+            }
             delay.delay_ns(100_000);
             timeout -= 1;
         }
         if !self.i2c_data.completion {
-            self.i2c_data.cmd_err = CmdErr::ErrTimeout;
+            return Err(Error::Timeout);
         }
+        Ok(())
     }
     pub fn prepare_read(&mut self, addr: u8, len: u32) {
         //initialize xfer data
@@ -953,7 +944,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c_data.msg.flags = I2C_MSG_READ;
         self.i2c_data.msg.length = len;
         self.i2c_data.stop = true;
-        self.i2c_data.cmd_err = CmdErr::NoErr;
         self.i2c_data.completion = false;
         self.i2c_data.master_xfer_cnt = 0;
     }
@@ -982,7 +972,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c_data.msg.flags = I2C_MSG_WRITE;
         self.i2c_data.msg.length = bytes.len() as u32;
         self.i2c_data.stop = stop;
-        self.i2c_data.cmd_err = CmdErr::NoErr;
         self.i2c_data.completion = false;
         self.i2c_data.master_xfer_cnt = 0;
         match self.i2c_config.xfer_mode {
@@ -1148,7 +1137,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     }
 
     //master recover bus
-    pub fn aspeed_new_i2c_recover_bus(&mut self) -> bool {
+    pub fn aspeed_new_i2c_recover_bus(&mut self) -> Result<(), Error> {
         //disable master and slave functionality to put it in idle state
         self.i2c
             .i2cc00()
@@ -1158,7 +1147,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             .i2cc00()
             .modify(|_, w| w.enbl_master_fn().bit(true));
         self.i2c_data.bus_recover = 1;
-        self.i2c_data.cmd_err = CmdErr::NoErr;
         //Check SDA and SCL status
         if !self.i2c.i2cc08().read().sampled_sdaline_state().bit()
             && self.i2c.i2cc08().read().sampled_sclline_state().bit()
@@ -1167,15 +1155,11 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             self.i2c
                 .i2cm18()
                 .modify(|_, w| w.enbl_bus_recover_cmd().bit(true));
-            self.i2c_wait_completion();
-            if self.i2c_data.cmd_err == CmdErr::NoErr {
-                return true;
-            }
-            return false;
+            return self.i2c_wait_completion();
+
         } else {
             //can't recover this situation
-            self.i2c_data.cmd_err = CmdErr::ErrProt;
-            return false;
+            return Err(Error::Proto);
         }
     }
 
@@ -1184,7 +1168,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
         //If bus is busy in a single master environment, attempt recovery
         if !self.i2c_config.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
-            if !self.aspeed_new_i2c_recover_bus() {
+            if self.aspeed_new_i2c_recover_bus().is_err() {
                 return Err(Error::Bus);
             }
         }
@@ -1194,8 +1178,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         } else {
             self.aspeed_i2c_write(cmd);
         }
-        self.i2c_wait_completion();
-        if !self.i2c_data.completion {
+        if self.i2c_wait_completion().is_err() {
             //timeout, do controller reset to recover
             let isr = self.i2c.i2cm14().read().bits();
             if isr > 0 || self.i2c.i2cc08().read().xfer_data_direction().bits() > 0 {
@@ -1238,14 +1221,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 }
                 return Err(Error::Timeout);
             }
-        }
-        dbg!(
-            self,
-            "i2c_aspeed_transfer cmd_err = {:?}",
-            self.i2c_data.cmd_err
-        );
-        if self.i2c_data.cmd_err != CmdErr::NoErr {
-            return Err(Error::NoAcknowledge(NoAcknowledgeSource::Unknown));
         }
         Ok(())
     }
