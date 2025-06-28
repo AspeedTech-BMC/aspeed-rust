@@ -7,8 +7,8 @@ pub trait HardwareInterface {
     type Error: embedded_hal::i2c::Error + core::fmt::Debug;
     
     // Methods return hardware-specific errors
-    fn init(&mut self);
-    fn configure_timing(&mut self, config: &mut I2cConfig) -> Result<(), Self::Error>;
+    fn init(&mut self, config: &mut I2cConfig);
+    fn configure_timing(&mut self, config: &mut I2cConfig);
     fn enable_interrupts(&mut self, mask: u32);
     fn clear_interrupts(&mut self, mask: u32);
     #[cfg(feature = "i2c_target")]

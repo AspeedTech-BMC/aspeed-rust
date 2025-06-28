@@ -319,10 +319,108 @@ macro_rules! dbg {
 impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a, I2C, I2CT> {
     type Error = Error;
 
-    fn init(&mut self) {
-        self.init();
+    fn init(&mut self, mut config: &mut I2cConfig) {
+        dbg!(self, "i2c init");
+        dbg!(
+            self,
+            "mdma_buf {:p}, sdma_buf {:p}",
+            self.mdma_buf.as_ptr(),
+            self.sdma_buf.as_ptr()
+        );
+        let scu = unsafe { &*Scu::ptr() };
+        // global init
+        if I2CGLOBAL_INIT
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            dbg!(self, "i2c global init");
+            scu.scu050().write(|w| w.rst_i2csmbus_ctrl().set_bit());
+            let mut delay = DummyDelay {};
+            delay.delay_ns(1_000_000); // 1ms delay
+            scu.scu054().write(|w| unsafe { w.bits(0x4) });
+            delay.delay_ns(1_000_000); // 1ms delay
+
+            let i2cg = unsafe { &*I2cglobal::ptr() };
+            i2cg.i2cg0c().write(|w| {
+                w.clk_divider_mode_sel()
+                    .set_bit()
+                    .reg_definition_sel()
+                    .set_bit()
+                    .select_the_action_when_slave_pkt_mode_rxbuf_empty()
+                    .set_bit()
+            });
+            /*
+             * APB clk : 50Mhz
+             * div  : scl       : baseclk [APB/((div/2) + 1)] : tBuf [1/bclk * 16]
+             * I2CG10[31:24] base clk4 for i2c auto recovery timeout counter (0x62)
+             * I2CG10[23:16] base clk3 for Standard-mode (100Khz) min tBuf 4.7us
+             * 0x1d : 100.8Khz  : 3.225Mhz                    : 4.96us
+             * 0x1e : 97.66Khz  : 3.125Mhz                    : 5.12us
+             * 0x1f : 97.85Khz  : 3.03Mhz                     : 5.28us
+             * 0x20 : 98.04Khz  : 2.94Mhz                     : 5.44us
+             * 0x21 : 98.61Khz  : 2.857Mhz                    : 5.6us
+             * 0x22 : 99.21Khz  : 2.77Mhz                     : 5.76us (default)
+             * I2CG10[15:8] base clk2 for Fast-mode (400Khz) min tBuf 1.3us
+             * 0x08 : 400Khz    : 10Mhz                       : 1.6us
+             * I2CG10[7:0] base clk1 for Fast-mode Plus (1Mhz) min tBuf 0.5us
+             * 0x03 : 1Mhz      : 20Mhz                       : 0.8us
+             */
+            i2cg.i2cg10().write(|w| unsafe { w.bits(0x62220803) });
+        }
+
+        // i2c reset
+        self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
+        if !config.multi_master {
+            self.i2c
+                .i2cc00()
+                .write(|w| w.dis_multimaster_capability_for_master_fn_only().set_bit());
+        }
+        self.i2c.i2cc00().write(|w| {
+            w.enbl_bus_autorelease_when_scllow_sdalow_or_slave_mode_inactive_timeout()
+                .set_bit()
+                .enbl_master_fn()
+                .set_bit()
+        });
+        
+        // set AC timing
+        self.configure_timing(&mut config);
+        // clear interrupts
+        self.i2c.i2cm14().write(|w| unsafe { w.bits(0xffffffff) });
+        // set interrupt
+        self.i2c.i2cm10().write(|w| {
+            w.enbl_pkt_cmd_done_int()
+                .set_bit()
+                .enbl_bus_recover_done_int()
+                .set_bit()
+        });
+        dbg!(
+            self,
+            "i2c init after set interrupt: {:#x}",
+            self.i2c.i2cm14().read().bits()
+        );
+        if config.smbus_alert {
+            self.i2c
+                .i2cm10()
+                .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
+        }
+
+        if cfg!(feature = "i2c_target") {
+            dbg!(self, "i2c target enabled");
+            // clear slave interrupts
+            self.i2c.i2cs24().write(|w| unsafe { w.bits(0xffffffff) });
+            if config.xfer_mode == I2cXferMode::ByteMode {
+                self.i2c.i2cs20().write(|w| unsafe { w.bits(0xffff) });
+            } else {
+                self.i2c.i2cs20().write(|w| {
+                    w.enbl_slave_mode_inactive_timeout_int()
+                        .set_bit()
+                        .enbl_pkt_cmd_done_int()
+                        .set_bit()
+                });
+            }
+        }
     }
-    fn configure_timing(&mut self, config: &mut I2cConfig) -> Result<(), Self::Error> {
+    fn configure_timing(&mut self, config: &mut I2cConfig) {
         let scu = unsafe { &*Scu::ptr() };
         config.timing_config.clk_src =
             HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
@@ -436,7 +534,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a,
                 });
             }
         }
-        Ok(())
     }
     fn enable_interrupts(&mut self, mask: u32) {
         self.i2c.i2cm10().write(|w| unsafe { w.bits(mask) });
