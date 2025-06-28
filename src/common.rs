@@ -1,4 +1,7 @@
 // Licensed under the Apache-2.0 license
+use core::ops::{Index, IndexMut};
+use crate::uart::UartController;
+use embedded_io::Write;
 
 pub struct DummyDelay;
 
@@ -57,8 +60,6 @@ impl<const N: usize> DmaBuffer<N> {
     }
 }
 
-use core::ops::{Index, IndexMut};
-
 impl<const N: usize> Index<usize> for DmaBuffer<N> {
     type Output = u8;
     fn index(&self, idx: usize) -> &Self::Output {
@@ -69,5 +70,31 @@ impl<const N: usize> Index<usize> for DmaBuffer<N> {
 impl<const N: usize> IndexMut<usize> for DmaBuffer<N> {
     fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
         &mut self.buf[idx]
+    }
+}
+
+pub trait Logger {
+    fn debug(&mut self, msg: &str);
+    fn error(&mut self, msg: &str);
+}
+
+// No-op implementation for production builds
+pub struct NoOpLogger;
+impl Logger for NoOpLogger {
+    fn debug(&mut self, _msg: &str) {}
+    fn error(&mut self, _msg: &str) {}
+}
+
+// UART logger adapter (separate concern)
+pub struct UartLogger<'a> {
+    uart: &'a mut UartController<'a>,
+}
+
+impl<'a> Logger for UartLogger<'a> {
+    fn debug(&mut self, msg: &str) {
+        writeln!(self.uart, "{}", msg).ok();
+    }
+    fn error(&mut self, msg: &str) {
+        writeln!(self.uart, "ERROR: {}", msg).ok();
     }
 }

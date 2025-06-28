@@ -1,5 +1,6 @@
 use crate::common::{DmaBuffer, DummyDelay};
 use crate::i2c::common::{I2cConfig, I2cSEvent, I2cXferMode};
+use crate::i2c::i2c::HardwareInterface;
 use crate::uart::UartController;
 use ast1060_pac::{I2cbuff, I2cglobal, Scu};
 use core::cmp::min;
@@ -298,10 +299,12 @@ impl<I2C: Instance, I2CT: I2CTarget> Drop for I2cController<'_, I2C, I2CT> {
         // Disable i2c controller
         self.i2c.i2cc00().write(|w| unsafe {w.bits(0)});
         // Disable interrupt and clear interrupt status
-        self.i2c.i2cm10().write(|w| unsafe {w.bits(0)});
-        self.i2c.i2cm14().write(|w| unsafe {w.bits(0xffff_ffff)});
-        self.i2c.i2cs20().write(|w| unsafe {w.bits(0)});
-        self.i2c.i2cs24().write(|w| unsafe {w.bits(0xffff_ffff)});
+        self.enable_interrupts(0);
+        self.clear_interrupts(0xffff_ffff);
+        #[cfg(feature = "i2c_target")]
+        self.enable_slave_interrupts(0);
+        #[cfg(feature = "i2c_target")]
+        self.clear_slave_interrupts(0xffff_ffff);
     }
 }
 macro_rules! dbg {
@@ -312,6 +315,154 @@ macro_rules! dbg {
         }
     };
 }
+
+impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a, I2C, I2CT> {
+    type Error = Error;
+
+    fn init(&mut self) {
+        self.init();
+    }
+    fn configure_timing(&mut self, config: &mut I2cConfig) -> Result<(), Self::Error> {
+        let scu = unsafe { &*Scu::ptr() };
+        config.timing_config.clk_src =
+            HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
+        
+        let p = unsafe { &*I2cglobal::ptr() };
+        let mut div: u32;
+        let mut divider_ratio: u32;
+
+        if p.i2cg0c().read().clk_divider_mode_sel().bit_is_set() {
+            let base_clk = config.timing_config.clk_src;
+            let base_clk1 = (config.timing_config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk1divisor_basedivider1().bits() as u32 + 2) * 10 / 2);
+            let base_clk2 = (config.timing_config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk2divisor_basedivider2().bits() as u32 + 2) * 10 / 2);
+            let base_clk3 = (config.timing_config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk3divisor_basedivider3().bits() as u32 + 2) * 10 / 2);
+            let base_clk4 = (config.timing_config.clk_src * 10)
+                / ((p.i2cg10().read().base_clk4divisor_basedivider4().bits() as u32 + 2) * 10 / 2);
+
+            // rounding
+            if config.timing_config.clk_src / (config.speed as u32) <= 32 {
+                div = 0;
+                divider_ratio = base_clk / config.speed as u32;
+                if base_clk / divider_ratio > config.speed as u32 {
+                    divider_ratio += 1;
+                }
+            } else if base_clk1 / (config.speed as u32) <= 32 {
+                div = 1;
+                divider_ratio = base_clk1 / config.speed as u32;
+                if base_clk1 / divider_ratio > config.speed as u32 {
+                    divider_ratio += 1;
+                }
+            } else if base_clk2 / (config.speed as u32) <= 32 {
+                div = 2;
+                divider_ratio = base_clk2 / config.speed as u32;
+                if base_clk2 / divider_ratio > config.speed as u32 {
+                    divider_ratio += 1;
+                }
+            } else if base_clk3 / (config.speed as u32) <= 32 {
+                div = 3;
+                divider_ratio = base_clk3 / config.speed as u32;
+                if base_clk3 / divider_ratio > config.speed as u32 {
+                    divider_ratio += 1;
+                }
+            } else {
+                div = 4;
+                divider_ratio = base_clk4 / config.speed as u32;
+                let mut inc = 0;
+                while divider_ratio + inc > 32 {
+                    inc |= divider_ratio & 1u32;
+                    divider_ratio >>= 1;
+                    div += 1;
+                }
+                divider_ratio += inc;
+                if base_clk4 / divider_ratio > config.speed as u32 {
+                    divider_ratio += 1;
+                }
+                divider_ratio = min(divider_ratio, 32);
+                div &= 0xf;
+            }
+
+            let mut scl_low: u8;
+            let mut scl_high: u8;
+            if (config.timing_config.manual_scl_low & config.timing_config.manual_scl_high) != 0 {
+                scl_low = config.timing_config.manual_scl_low;
+                scl_high = config.timing_config.manual_scl_high;
+            } else if (config.timing_config.manual_scl_low | config.timing_config.manual_scl_high) != 0 {
+                if config.timing_config.manual_scl_low != 0 {
+                    scl_low = config.timing_config.manual_scl_low;
+                    scl_high = divider_ratio as u8 - scl_low - 2;
+                } else {
+                    scl_high = config.timing_config.manual_scl_high;
+                    scl_low = divider_ratio as u8 - scl_high - 2;
+                }
+            } else {
+                scl_low = (divider_ratio * 9 / 16 - 1) as u8;
+                scl_high = divider_ratio as u8 - scl_low - 2;
+            }
+            scl_low = min(scl_low, 0xf);
+            scl_high = min(scl_high, 0xf);
+
+            /*Divisor : Base Clock : tCKHighMin : tCK High : tCK Low*/
+            self.i2c
+                .i2cc04()
+                .write(|w| unsafe { w.base_clk_divisor_tbase_clk().bits(div as u8) });
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclklow_pulse_width_tcklow()
+                    .bits(scl_low)
+            });
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclkhigh_pulse_width_tckhigh()
+                    .bits(scl_high)
+            });
+            self.i2c.i2cc04().write(|w| unsafe {
+                w.cycles_of_master_sclclkhigh_minimum_pulse_width_tckhigh_min()
+                    .bits(scl_high - 1)
+            });
+
+            if config.smbus_timeout {
+                self.i2c.i2cc04().write(|w| unsafe {
+                    w.timeout_base_clk_divisor_tout_base_clk()
+                        .bits(2)
+                        .timeout_timer()
+                        .bits(8)
+                });
+            }
+            if config.timing_config.manual_sda_hold < 4 {
+                self.i2c.i2cc04().write(|w| unsafe {
+                    w.hold_time_of_masterslave_data_thddat()
+                        .bits(config.timing_config.manual_sda_hold)
+                });
+            }
+        }
+        Ok(())
+    }
+    fn enable_interrupts(&mut self, mask: u32) {
+        self.i2c.i2cm10().write(|w| unsafe { w.bits(mask) });
+    }
+    fn clear_interrupts(&mut self, mask: u32) {
+        self.i2c.i2cm14().write(|w| unsafe { w.bits(mask) });
+    }
+    #[cfg(feature = "i2c_target")]
+    fn enable_slave_interrupts(&mut self, mask: u32) {
+        self.i2c.i2cs20().write(|w| unsafe { w.bits(mask) });
+    }
+    #[cfg(feature = "i2c_target")]
+    fn clear_slave_interrupts(&mut self, mask: u32) {
+        self.i2c.i2cs24().write(|w| unsafe { w.bits(mask) });
+    }
+    fn handle_interrupt(&mut self) {
+        //check slave mode first
+        if self.i2c.i2cc00().read().enbl_slave_fn().bit() {
+            if self.aspeed_i2c_slave_irq() != 0 {
+                return;
+            }
+        }
+        self.aspeed_i2c_master_irq();
+    }
+}
+
 impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     pub fn new(i2c: I2C, config: I2cConfig, uart: Option<&'a mut UartController<'a>>) -> Self {
         let i2c = unsafe { &*I2C::ptr() };
