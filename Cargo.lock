@@ -10,7 +10,7 @@ dependencies = [
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-semihosting",
- "embedded-hal 1.0.0 (git+https://github.com/rust-embedded/embedded-hal.git)",
+ "embedded-hal 1.0.0",
  "embedded-hal 1.0.0-alpha.1",
  "embedded-io",
  "fugit",
@@ -22,7 +22,7 @@ dependencies = [
 [[package]]
 name = "ast1060-pac"
 version = "0.1.0"
-source = "git+https://github.com/rusty1968/ast1060-pac.git#dd1e5357d8274987b3e5a864a7bc49310bc0ccf7"
+source = "git+https://github.com/AspeedTech-BMC/ast1060-pac.git#1ad5938648ccdc702afcd51651c90b3d71b11735"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -37,7 +37,7 @@ checksum = "e539d3fca749fcee5236ab05e93a52867dd549cc157c8cb7f99595f3cedffdb5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.101",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -129,11 +129,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
-name = "embedded-hal"
-version = "1.0.0"
-source = "git+https://github.com/rust-embedded/embedded-hal.git#520945278942c301433c391f63a075227d9e7c84"
-
-[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -202,7 +197,7 @@ version = "0.1.0"
 source = "git+https://github.com/rusty1968/proposed_traits.git?rev=43fe54addf323dc17915f1fc5f991f9d94eb161a#43fe54addf323dc17915f1fc5f991f9d94eb161a"
 dependencies = [
  "async-trait",
- "embedded-hal 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "embedded-hal 1.0.0",
  "embedded-io",
  "embedded-storage",
  "rand_core",
@@ -266,9 +261,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.101"
+version = "2.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ce2b7fc941b3a24138a0a7cf8e858bfc6a992e7978a068a5c760deb0ed43caf"
+checksum = "17b6f705963418cdb9927482fa304bc562ece2fdd4f616084c50b7023b435a40"
 dependencies = [
  "proc-macro2",
  "quote",
