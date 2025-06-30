@@ -16,6 +16,9 @@ pub trait HardwareInterface {
     #[cfg(feature = "i2c_target")]
     fn clear_slave_interrupts(&mut self, mask: u32);
     //fn start_transfer(&mut self, state: &TransferState, mode: TransferMode) -> Result<(), Self::Error>;
+    fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Self::Error>;
+    fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error>;
+    fn write_read(&mut self, addr: SevenBitAddress, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Self::Error>;
     fn handle_interrupt(&mut self);
     //fn is_bus_busy(&self) -> bool;
     //fn recover_bus(&mut self) -> Result<(), Self::Error>;
@@ -25,9 +28,9 @@ pub trait HardwareInterface {
 }
 
 pub struct I2cController<H: HardwareInterface, L: Logger = NoOpLogger> {
-    hardware: H,
-    config: I2cConfig,
-    logger: L,
+    pub hardware: H,
+    pub config: I2cConfig,
+    pub logger: L,
 }
 
 impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::ErrorType for I2cController<H, L> {
@@ -35,13 +38,11 @@ impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::ErrorType for I2cContro
 }
 impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::I2c for I2cController<H, L> {
     fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        //self.hardware.read(addr, buffer)
-        Ok(())
+        self.hardware.read(addr, buffer)
     }
 
     fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Self::Error> {
-        //self.hardware.write(addr, bytes)
-        Ok(())
+        self.hardware.write(addr, bytes)
     }
 
     fn write_read(
@@ -50,8 +51,7 @@ impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::I2c for I2cController<H
         bytes: &[u8],
         buffer: &mut [u8],
     ) -> Result<(), Self::Error> {
-        //self.hardware.write_read(addr, bytes, buffer)
-        Ok(())
+        self.hardware.write_read(addr, bytes, buffer)
     }
 
     fn transaction(

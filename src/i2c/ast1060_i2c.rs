@@ -2,7 +2,7 @@ use crate::common::{DmaBuffer, DummyDelay};
 use crate::i2c::common::{I2cConfig, I2cSEvent, I2cXferMode};
 use crate::i2c::i2c::HardwareInterface;
 use crate::uart::UartController;
-use ast1060_pac::{I2cbuff, I2cglobal, Scu};
+use ast1060_pac::{I2cglobal, Scu};
 use core::cmp::min;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -280,21 +280,22 @@ impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
     }
 }
 
-impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for I2cController<'_, I2C, I2CT> {
+/*impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::ErrorType for Ast1060I2c<'_, I2C, I2CT> {
     type Error = Error;
-}
+}*/
 /// I2C abstraction
-pub struct I2cController<'a, I2C: Instance, I2CT: I2CTarget> {
+pub struct Ast1060I2c<'a, I2C: Instance, I2CT: I2CTarget> {
     pub i2c: &'static ast1060_pac::i2c::RegisterBlock,
     pub i2c_buff: &'static ast1060_pac::i2cbuff::RegisterBlock,
-    pub i2c_config: I2cConfig,
+    pub xfer_mode: I2cXferMode,
+    pub multi_master: bool,
     pub mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE>,
     pub sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE>,
     pub i2c_data: I2cData<'a, I2CT>,
     _marker: PhantomData<I2C>,
     pub dbg_uart: Option<&'a mut UartController<'a>>,
 }
-impl<I2C: Instance, I2CT: I2CTarget> Drop for I2cController<'_, I2C, I2CT> {
+impl<I2C: Instance, I2CT: I2CTarget> Drop for Ast1060I2c<'_, I2C, I2CT> {
     fn drop(&mut self) {
         // Disable i2c controller
         self.i2c.i2cc00().write(|w| unsafe {w.bits(0)});
@@ -316,7 +317,7 @@ macro_rules! dbg {
     };
 }
 
-impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a, I2C, I2CT> {
+impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for Ast1060I2c<'a, I2C, I2CT> {
     type Error = Error;
 
     fn init(&mut self, mut config: &mut I2cConfig) {
@@ -403,12 +404,13 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a,
                 .i2cm10()
                 .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
         }
-
+        self.xfer_mode = config.xfer_mode;
+        self.multi_master = config.multi_master;
         if cfg!(feature = "i2c_target") {
             dbg!(self, "i2c target enabled");
             // clear slave interrupts
             self.i2c.i2cs24().write(|w| unsafe { w.bits(0xffffffff) });
-            if config.xfer_mode == I2cXferMode::ByteMode {
+            if self.xfer_mode == I2cXferMode::ByteMode {
                 self.i2c.i2cs20().write(|w| unsafe { w.bits(0xffff) });
             } else {
                 self.i2c.i2cs20().write(|w| {
@@ -558,10 +560,53 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> HardwareInterface for I2cController<'a,
         }
         self.aspeed_i2c_master_irq();
     }
+
+    fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Error> {
+        self.prepare_write(addr, &bytes, true);
+        self.i2c_aspeed_transfer()
+    }
+    fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Error> {
+        self.prepare_read(addr, buffer.len() as u32);
+        match self.i2c_aspeed_transfer() {
+            Ok(_) => {
+                self.read_processed(buffer);
+                return Ok(());
+            },
+            Err(e) => {
+                return Err(e);
+            },
+        }
+    }
+    fn write_read(
+        &mut self,
+        addr: SevenBitAddress,
+        bytes: &[u8],
+        buffer: &mut [u8],
+    ) -> Result<(), Error> {
+        self.prepare_write(addr, &bytes, false);
+
+        match self.i2c_aspeed_transfer() {
+            Err(e) => {
+                return Err(e);
+            },
+            _ => {},
+        }
+        //read
+        self.prepare_read(addr, buffer.len() as u32);
+        match self.i2c_aspeed_transfer() {
+            Ok(_) => {
+                self.read_processed(buffer);
+                return Ok(());
+            },
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
 }
 
-impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
-    pub fn new(i2c: I2C, config: I2cConfig, uart: Option<&'a mut UartController<'a>>) -> Self {
+impl<'a, I2C: Instance, I2CT: I2CTarget> Ast1060I2c<'a, I2C, I2CT> {
+    pub fn new(uart: Option<&'a mut UartController<'a>>) -> Self {
         let i2c = unsafe { &*I2C::ptr() };
         let i2c_buff = unsafe { &*I2C::buff_ptr() };
         let index: usize = I2C::BUS_NUM as usize;
@@ -571,7 +616,8 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         Self {
             i2c: i2c,
             i2c_buff: i2c_buff,
-            i2c_config: config,
+            xfer_mode: I2cXferMode::ByteMode,
+            multi_master: false,
             mdma_buf: mdma_buf,
             sdma_buf: sdma_buf,
             i2c_data: i2c_data,
@@ -616,222 +662,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         dbg!(self, "**************************");
     }
 
-    pub fn init(&mut self) {
-        dbg!(self, "i2c init");
-        dbg!(
-            self,
-            "mdma_buf {:p}, sdma_buf {:p}",
-            self.mdma_buf.as_ptr(),
-            self.sdma_buf.as_ptr()
-        );
-        let scu = unsafe { &*Scu::ptr() };
-        // global init
-        if I2CGLOBAL_INIT
-            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            dbg!(self, "i2c global init");
-            scu.scu050().write(|w| w.rst_i2csmbus_ctrl().set_bit());
-            let mut delay = DummyDelay {};
-            delay.delay_ns(1_000_000); // 1ms delay
-            scu.scu054().write(|w| unsafe { w.bits(0x4) });
-            delay.delay_ns(1_000_000); // 1ms delay
-
-            let i2cg = unsafe { &*I2cglobal::ptr() };
-            i2cg.i2cg0c().write(|w| {
-                w.clk_divider_mode_sel()
-                    .set_bit()
-                    .reg_definition_sel()
-                    .set_bit()
-                    .select_the_action_when_slave_pkt_mode_rxbuf_empty()
-                    .set_bit()
-            });
-            /*
-             * APB clk : 50Mhz
-             * div  : scl       : baseclk [APB/((div/2) + 1)] : tBuf [1/bclk * 16]
-             * I2CG10[31:24] base clk4 for i2c auto recovery timeout counter (0x62)
-             * I2CG10[23:16] base clk3 for Standard-mode (100Khz) min tBuf 4.7us
-             * 0x1d : 100.8Khz  : 3.225Mhz                    : 4.96us
-             * 0x1e : 97.66Khz  : 3.125Mhz                    : 5.12us
-             * 0x1f : 97.85Khz  : 3.03Mhz                     : 5.28us
-             * 0x20 : 98.04Khz  : 2.94Mhz                     : 5.44us
-             * 0x21 : 98.61Khz  : 2.857Mhz                    : 5.6us
-             * 0x22 : 99.21Khz  : 2.77Mhz                     : 5.76us (default)
-             * I2CG10[15:8] base clk2 for Fast-mode (400Khz) min tBuf 1.3us
-             * 0x08 : 400Khz    : 10Mhz                       : 1.6us
-             * I2CG10[7:0] base clk1 for Fast-mode Plus (1Mhz) min tBuf 0.5us
-             * 0x03 : 1Mhz      : 20Mhz                       : 0.8us
-             */
-            i2cg.i2cg10().write(|w| unsafe { w.bits(0x62220803) });
-        }
-
-        // i2c reset
-        self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
-        if !self.i2c_config.multi_master {
-            self.i2c
-                .i2cc00()
-                .write(|w| w.dis_multimaster_capability_for_master_fn_only().set_bit());
-        }
-        self.i2c.i2cc00().write(|w| {
-            w.enbl_bus_autorelease_when_scllow_sdalow_or_slave_mode_inactive_timeout()
-                .set_bit()
-                .enbl_master_fn()
-                .set_bit()
-        });
-
-        // set AC timing
-        self.i2c_config.timing_config.clk_src =
-            HPLL_FREQ / ((scu.scu310().read().apbbus_pclkdivider_sel().bits() as u32 + 1) * 2);
-        dbg!(self, "clk_src {}", self.i2c_config.timing_config.clk_src);
-        self.select_i2c_clock();
-        // clear interrupts
-        self.i2c.i2cm14().write(|w| unsafe { w.bits(0xffffffff) });
-        // set interrupt
-        self.i2c.i2cm10().write(|w| {
-            w.enbl_pkt_cmd_done_int()
-                .set_bit()
-                .enbl_bus_recover_done_int()
-                .set_bit()
-        });
-        dbg!(
-            self,
-            "i2c init after set interrupt: {:#x}",
-            self.i2c.i2cm14().read().bits()
-        );
-        if self.i2c_config.smbus_alert {
-            self.i2c
-                .i2cm10()
-                .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
-        }
-
-        if cfg!(feature = "i2c_target") {
-            dbg!(self, "i2c target enabled");
-            // clear slave interrupts
-            self.i2c.i2cs24().write(|w| unsafe { w.bits(0xffffffff) });
-            if self.i2c_config.xfer_mode == I2cXferMode::ByteMode {
-                self.i2c.i2cs20().write(|w| unsafe { w.bits(0xffff) });
-            } else {
-                self.i2c.i2cs20().write(|w| {
-                    w.enbl_slave_mode_inactive_timeout_int()
-                        .set_bit()
-                        .enbl_pkt_cmd_done_int()
-                        .set_bit()
-                });
-            }
-        }
-        self.dump_regs();
-    }
-    pub fn select_i2c_clock(&self) {
-        let p = unsafe { &*I2cglobal::ptr() };
-        let mut div: u32;
-        let mut divider_ratio: u32;
-
-        if p.i2cg0c().read().clk_divider_mode_sel().bit_is_set() {
-            let base_clk = self.i2c_config.timing_config.clk_src;
-            let base_clk1 = (self.i2c_config.timing_config.clk_src * 10)
-                / ((p.i2cg10().read().base_clk1divisor_basedivider1().bits() as u32 + 2) * 10 / 2);
-            let base_clk2 = (self.i2c_config.timing_config.clk_src * 10)
-                / ((p.i2cg10().read().base_clk2divisor_basedivider2().bits() as u32 + 2) * 10 / 2);
-            let base_clk3 = (self.i2c_config.timing_config.clk_src * 10)
-                / ((p.i2cg10().read().base_clk3divisor_basedivider3().bits() as u32 + 2) * 10 / 2);
-            let base_clk4 = (self.i2c_config.timing_config.clk_src * 10)
-                / ((p.i2cg10().read().base_clk4divisor_basedivider4().bits() as u32 + 2) * 10 / 2);
-
-            // rounding
-            if self.i2c_config.timing_config.clk_src / (self.i2c_config.speed as u32) <= 32 {
-                div = 0;
-                divider_ratio = base_clk / self.i2c_config.speed as u32;
-                if base_clk / divider_ratio > self.i2c_config.speed as u32 {
-                    divider_ratio += 1;
-                }
-            } else if base_clk1 / (self.i2c_config.speed as u32) <= 32 {
-                div = 1;
-                divider_ratio = base_clk1 / self.i2c_config.speed as u32;
-                if base_clk1 / divider_ratio > self.i2c_config.speed as u32 {
-                    divider_ratio += 1;
-                }
-            } else if base_clk2 / (self.i2c_config.speed as u32) <= 32 {
-                div = 2;
-                divider_ratio = base_clk2 / self.i2c_config.speed as u32;
-                if base_clk2 / divider_ratio > self.i2c_config.speed as u32 {
-                    divider_ratio += 1;
-                }
-            } else if base_clk3 / (self.i2c_config.speed as u32) <= 32 {
-                div = 3;
-                divider_ratio = base_clk3 / self.i2c_config.speed as u32;
-                if base_clk3 / divider_ratio > self.i2c_config.speed as u32 {
-                    divider_ratio += 1;
-                }
-            } else {
-                div = 4;
-                divider_ratio = base_clk4 / self.i2c_config.speed as u32;
-                let mut inc = 0;
-                while divider_ratio + inc > 32 {
-                    inc |= divider_ratio & 1u32;
-                    divider_ratio >>= 1;
-                    div += 1;
-                }
-                divider_ratio += inc;
-                if base_clk4 / divider_ratio > self.i2c_config.speed as u32 {
-                    divider_ratio += 1;
-                }
-                divider_ratio = min(divider_ratio, 32);
-                div &= 0xf;
-            }
-
-            let mut scl_low: u8;
-            let mut scl_high: u8;
-            if (self.i2c_config.timing_config.manual_scl_low & self.i2c_config.timing_config.manual_scl_high) != 0 {
-                scl_low = self.i2c_config.timing_config.manual_scl_low;
-                scl_high = self.i2c_config.timing_config.manual_scl_high;
-            } else if (self.i2c_config.timing_config.manual_scl_low | self.i2c_config.timing_config.manual_scl_high) != 0 {
-                if self.i2c_config.timing_config.manual_scl_low != 0 {
-                    scl_low = self.i2c_config.timing_config.manual_scl_low;
-                    scl_high = divider_ratio as u8 - scl_low - 2;
-                } else {
-                    scl_high = self.i2c_config.timing_config.manual_scl_high;
-                    scl_low = divider_ratio as u8 - scl_high - 2;
-                }
-            } else {
-                scl_low = (divider_ratio * 9 / 16 - 1) as u8;
-                scl_high = divider_ratio as u8 - scl_low - 2;
-            }
-            scl_low = min(scl_low, 0xf);
-            scl_high = min(scl_high, 0xf);
-
-            /*Divisor : Base Clock : tCKHighMin : tCK High : tCK Low*/
-            self.i2c
-                .i2cc04()
-                .write(|w| unsafe { w.base_clk_divisor_tbase_clk().bits(div as u8) });
-            self.i2c.i2cc04().write(|w| unsafe {
-                w.cycles_of_master_sclclklow_pulse_width_tcklow()
-                    .bits(scl_low)
-            });
-            self.i2c.i2cc04().write(|w| unsafe {
-                w.cycles_of_master_sclclkhigh_pulse_width_tckhigh()
-                    .bits(scl_high)
-            });
-            self.i2c.i2cc04().write(|w| unsafe {
-                w.cycles_of_master_sclclkhigh_minimum_pulse_width_tckhigh_min()
-                    .bits(scl_high - 1)
-            });
-
-            if self.i2c_config.smbus_timeout {
-                self.i2c.i2cc04().write(|w| unsafe {
-                    w.timeout_base_clk_divisor_tout_base_clk()
-                        .bits(2)
-                        .timeout_timer()
-                        .bits(8)
-                });
-            }
-            if self.i2c_config.timing_config.manual_sda_hold < 4 {
-                self.i2c.i2cc04().write(|w| unsafe {
-                    w.hold_time_of_masterslave_data_thddat()
-                        .bits(self.i2c_config.timing_config.manual_sda_hold)
-                });
-            }
-        }
-    }
     pub fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> Result<(), Error> {
         if irq_status & AST_I2CM_ARBIT_LOSS > 0 {
             return Err(Error::ArbitrationLoss);
@@ -852,7 +682,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let xfer_len: u16;
 
         let msg_len = self.i2c_data.msg.length;
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmatx_actual_len_byte().bits() as u16;
             }
@@ -930,7 +760,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let xfer_len: u16;
         let msg_len = self.i2c_data.msg.length;
         dbg!(self, "do_i2cm_rx");
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 xfer_len = self.i2c.i2cm48().read().dmarx_actual_len_byte().bits();
                 dbg!(self, "dma data: {:#x}", unsafe { *self.mdma_buf.as_ptr() });
@@ -1102,7 +932,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
     //copy data
     pub fn read_processed(&mut self, buffer: &mut [u8]) {
         dbg!(self, "read_processed");
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 let src = self
                     .mdma_buf
@@ -1126,7 +956,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c_data.stop = stop;
         self.i2c_data.completion = false;
         self.i2c_data.master_xfer_cnt = 0;
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 let dest = &mut self.mdma_buf.as_mut_slice(0, bytes.len() as usize);
                 dest.copy_from_slice(bytes);
@@ -1146,7 +976,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let msg_len = self.i2c_data.msg.length;
         dbg!(self, "aspeed_i2c_read");
         cmd |= AST_I2CM_RX_CMD;
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
                 if len_left > ASPEED_I2C_DMA_SIZE as u32 {
@@ -1216,7 +1046,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
 
         dbg!(self, "aspeed_i2c_write");
         cmd |= AST_I2CM_TX_CMD;
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 //dma mode
                 len_left = msg_len - self.i2c_data.master_xfer_cnt;
@@ -1319,7 +1149,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         let mut cmd: u32;
 
         //If bus is busy in a single master environment, attempt recovery
-        if !self.i2c_config.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
+        if !self.multi_master && self.i2c.i2cc08().read().bus_busy_status().bit() {
             if self.aspeed_new_i2c_recover_bus().is_err() {
                 return Err(Error::Bus);
             }
@@ -1340,7 +1170,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 if cfg!(feature = "i2c_target") {
                     cmd = AST_I2CS_ACTIVE_ALL | AST_I2CS_PKT_MODE_EN;
                     if ctrl & AST_I2CC_SLAVE_EN == AST_I2CC_SLAVE_EN {
-                        match self.i2c_config.xfer_mode {
+                        match self.xfer_mode {
                             I2cXferMode::DmaMode => {
                                 cmd |= AST_I2CS_RX_DMA_EN;
                                 self.i2c.i2cs3c().write(|w| unsafe {
@@ -1404,7 +1234,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 .bit(true)
         });
         // trigger rx buffer
-        match self.i2c_config.xfer_mode {
+        match self.xfer_mode {
             I2cXferMode::DmaMode => {
                 cmd |= AST_I2CS_RX_DMA_EN;
                 let slave_dma_addr = self.sdma_buf.as_mut_ptr() as u32;
@@ -1483,7 +1313,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             //Turn on slave mode
             self.i2c.i2cc00().modify(|_, w| w.enbl_slave_fn().bit(true));
         }
-        if self.i2c_config.xfer_mode == I2cXferMode::ByteMode {
+        if self.xfer_mode == I2cXferMode::ByteMode {
             //Clear irq and re-send slave trigger command
             cmd = AST_I2CS_ACTIVE_ALL;
             self.i2c.i2cs28().write(|w| unsafe { w.bits(cmd) });
@@ -1562,7 +1392,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
         } else if event == I2cSEvent::SlaveRdProc {
             dbg!(self, "read_processed");
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     let tx_len = self.i2c.i2cs4c().read().dmatx_actual_len_byte().bits();
                     dbg!(self, "dma tx_len {:#x}", tx_len);
@@ -1604,7 +1434,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         } else if event == I2cSEvent::SlaveWrRecvd {
             //Another I2C master has sent a byte to us which needs to be set in ‘val’
             //bus driver delivers received byte
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     let slave_rx_len = self.i2c.i2cs4c().read().dmarx_actual_len_byte().bits();
                     dbg!(self, "dma write_received: len={:#x}", slave_rx_len);
@@ -1682,7 +1512,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         {
             dbg!(self, "S: Sw|D - issue rx\n");
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
@@ -1707,7 +1537,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             dbg!(self, "S : Sw | P\n");
             self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     cmd |= AST_I2CS_RX_DMA_EN;
                 }
@@ -1731,7 +1561,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
             }
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     self.i2c.i2cs4c().write(|w| unsafe { w.bits(0) });
@@ -1765,7 +1595,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
                 self.i2c_slave_pkt_write(I2cSEvent::SlaveWrReq);
             }
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_write(I2cSEvent::SlaveWrRecvd);
                     //read request
@@ -1797,7 +1627,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             //First Start read
             dbg!(self, "S: Sw | AST_I2CS_Wait_TX_DMA\n");
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
@@ -1825,7 +1655,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             dbg!(self, "S: AST_I2CS_Wait_TX_DMA\n");
             //it should be next start read
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c_slave_pkt_read(I2cSEvent::SlaveRdProc);
 
@@ -1854,7 +1684,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
             }
             self.i2c_slave_event_stop();
             cmd = SLAVE_TRIGGER_CMD;
-            match self.i2c_config.xfer_mode {
+            match self.xfer_mode {
                 I2cXferMode::DmaMode => {
                     self.i2c.i2cs2c().modify(|_, w| unsafe {
                         w.dmarx_buf_len_byte()
@@ -1974,54 +1804,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         self.i2c.i2cs24().write(|w| unsafe { w.bits(sts) });
         self.i2c.i2cs24().read().bits();
     }
-
-    pub fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Error> {
-        self.prepare_write(addr, &bytes, true);
-        self.i2c_aspeed_transfer()
-    }
-
-    pub fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Error> {
-        self.prepare_read(addr, buffer.len() as u32);
-        match self.i2c_aspeed_transfer() {
-            Ok(_) => {
-                self.read_processed(buffer);
-                return Ok(());
-            },
-            Err(e) => {
-                return Err(e);
-            },
-        }
-    }
-
-    //write data first to the i2c device at address
-    //before performing the read into the buffer
-    pub fn write_read(
-        &mut self,
-        addr: SevenBitAddress,
-        bytes: &[u8],
-        buffer: &mut [u8],
-    ) -> Result<(), Error> {
-        self.prepare_write(addr, &bytes, false);
-
-        match self.i2c_aspeed_transfer() {
-            Err(e) => {
-                return Err(e);
-            },
-            _ => {},
-        }
-        //read
-        self.prepare_read(addr, buffer.len() as u32);
-        match self.i2c_aspeed_transfer() {
-            Ok(_) => {
-                self.read_processed(buffer);
-                return Ok(());
-            },
-            Err(e) => {
-                return Err(e);
-            }
-        }
-    }
-
     pub fn transaction<'b>(
         &mut self,
         addr: SevenBitAddress,
@@ -2074,33 +1856,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget> I2cController<'a, I2C, I2CT> {
         transaction_impl!(self, addr, ops_slice, Operation);
         // Fallthrough is success
         Ok(())
-    }
-}
-
-impl<I2C: Instance, I2CT: I2CTarget> embedded_hal::i2c::I2c for I2cController<'_, I2C, I2CT> {
-    fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error> {
-        self.read(addr, buffer)
-    }
-
-    fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Self::Error> {
-        self.write(addr, bytes)
-    }
-
-    fn write_read(
-        &mut self,
-        addr: SevenBitAddress,
-        bytes: &[u8],
-        buffer: &mut [u8],
-    ) -> Result<(), Self::Error> {
-        self.write_read(addr, bytes, buffer)
-    }
-
-    fn transaction(
-        &mut self,
-        addr: SevenBitAddress,
-        operations: &mut [Operation<'_>],
-    ) -> Result<(), Self::Error> {
-        self.transaction_slice(addr, operations)
     }
 }
 
