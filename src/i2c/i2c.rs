@@ -20,8 +20,8 @@ pub trait HardwareInterface {
     fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error>;
     fn write_read(&mut self, addr: SevenBitAddress, bytes: &[u8], buffer: &mut [u8]) -> Result<(), Self::Error>;
     fn handle_interrupt(&mut self);
-    //fn is_bus_busy(&self) -> bool;
-    //fn recover_bus(&mut self) -> Result<(), Self::Error>;
+    //fn is_bus_busy(&self) -> bool
+    fn recover_bus(&mut self) -> Result<(), Self::Error>;
 
 
     
