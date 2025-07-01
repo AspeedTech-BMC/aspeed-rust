@@ -73,11 +73,19 @@ pub struct UartLogger<'a> {
     uart: &'a mut UartController<'a>,
 }
 
+impl<'a> UartLogger<'a> {
+    pub fn new(uart: &'a mut UartController<'a>) -> Self {
+        UartLogger{uart}
+    }
+}
+
 impl<'a> Logger for UartLogger<'a> {
     fn debug(&mut self, msg: &str) {
         writeln!(self.uart, "{}", msg).ok();
+        write!(self.uart, "\r").ok();
     }
     fn error(&mut self, msg: &str) {
         writeln!(self.uart, "ERROR: {}", msg).ok();
+        write!(self.uart, "\r").ok();
     }
 }

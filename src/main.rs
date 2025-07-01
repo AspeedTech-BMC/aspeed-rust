@@ -141,6 +141,7 @@ fn main() -> ! {
     writeln!(uart_controller, "\r\nHello, world!!\r\n").unwrap();
 
     //i2c_test::test_i2c_master(&mut uart_controller);
+    #[cfg(feature = "i2c_target")]
     i2c_test::test_i2c_slave(&mut uart_controller);
     /*
     // Enable HACE (Hash and Crypto Engine)

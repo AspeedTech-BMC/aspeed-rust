@@ -98,8 +98,8 @@ pub fn test_i2c_master(uart:&mut UartController<'_>) {
         .smbus_alert(false)
         .speed(I2cSpeed::Standard)
         .build();
-    let mut i2c1: I2cController<Ast1060I2c<ast1060_pac::I2c1, DummyI2CTarget>, NoOpLogger> = I2cController {
-        hardware: Ast1060I2c::new(Some(&mut dbg_uart)),
+    let mut i2c1: I2cController<Ast1060I2c<ast1060_pac::I2c1, DummyI2CTarget, UartLogger>, NoOpLogger> = I2cController {
+        hardware: Ast1060I2c::new(UartLogger::new(&mut dbg_uart)),
         config: i2c_config,
         logger: NoOpLogger{},
     };
@@ -157,6 +157,7 @@ pub fn test_i2c_master(uart:&mut UartController<'_>) {
     }
 }
 
+#[cfg(feature = "i2c_target")]
 pub fn test_i2c_slave(uart:&mut UartController<'_>) {
     let _peripherals = unsafe { Peripherals::steal() };
     let mut delay = DummyDelay {};
@@ -181,8 +182,8 @@ pub fn test_i2c_slave(uart:&mut UartController<'_>) {
         .speed(I2cSpeed::Standard)
         .build();
     //i2c2 as slave
-    let mut i2c2: I2cController<Ast1060I2c<ast1060_pac::I2c2, DummyI2CTarget>, NoOpLogger> = I2cController {
-        hardware: Ast1060I2c::new(Some(&mut dbg_uart)),
+    let mut i2c2: I2cController<Ast1060I2c<ast1060_pac::I2c2, DummyI2CTarget, UartLogger>, NoOpLogger> = I2cController {
+        hardware: Ast1060I2c::new(UartLogger::new(&mut dbg_uart)),
         config: i2c_config,
         logger: NoOpLogger{},
     };
@@ -197,7 +198,7 @@ pub fn test_i2c_slave(uart:&mut UartController<'_>) {
     let mut delay_slave = DummyDelay {};
     while test_count>0 {
         delay_slave.delay_ms(10);
-        i2c2.hardware.aspeed_i2c_isr();
+        i2c2.hardware.handle_interrupt();
         test_count -= 1;
     }
 
