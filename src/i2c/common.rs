@@ -1,4 +1,3 @@
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum I2cSpeed {
@@ -82,17 +81,18 @@ impl I2cConfigBuilder {
         self
     }
     pub fn build(self) -> I2cConfig {
-        I2cConfig { 
+        I2cConfig {
             xfer_mode: self.xfer_mode,
             multi_master: self.multi_master,
             smbus_timeout: self.smbus_timeout,
             smbus_alert: self.smbus_alert,
-            timing_config: self.timing_config.unwrap_or(TimingConfig { 
+            timing_config: self.timing_config.unwrap_or(TimingConfig {
                 manual_scl_high: 0,
                 manual_scl_low: 0,
                 manual_sda_hold: 0,
-                clk_src: 0, 
+                clk_src: 0,
             }),
-            speed: self.speed }
+            speed: self.speed,
+        }
     }
 }
