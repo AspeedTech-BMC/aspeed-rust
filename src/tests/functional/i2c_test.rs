@@ -19,9 +19,7 @@ pub enum DummyI2CError {
 
 impl embedded_hal::i2c::Error for DummyI2CError {
     fn kind(&self) -> ErrorKind {
-        match *self {
-            _ => ErrorKind::Other,
-        }
+        ErrorKind::Other
     }
 }
 
@@ -32,6 +30,7 @@ impl embedded_hal::i2c::ErrorType for DummyI2CTarget {
 struct DummyI2CTarget {
     address: u8,
     buffer: [u8; 16],
+    read_idx: usize,
 }
 
 impl I2CCoreTarget for DummyI2CTarget {
@@ -42,7 +41,7 @@ impl I2CCoreTarget for DummyI2CTarget {
         self.address = address;
         Ok(())
     }
-    fn on_transaction_start(&mut self, repeated: bool) {}
+    fn on_transaction_start(&mut self, _repeated: bool) {}
     fn on_stop(&mut self) {}
     fn on_address_match(&mut self, address: u8) -> bool {
         self.address == address
@@ -51,10 +50,12 @@ impl I2CCoreTarget for DummyI2CTarget {
 
 impl ReadTarget for DummyI2CTarget {
     fn on_read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
-        for i in 0..buffer.len() {
-            buffer[i] = self.buffer[i];
+        buffer[0] = self.buffer[self.read_idx];
+        self.read_idx += 1;
+        if self.read_idx == self.buffer.len() {
+            self.read_idx = 0;
         }
-        Ok(buffer.len())
+        Ok(1)
     }
 }
 
@@ -63,6 +64,7 @@ impl WriteTarget for DummyI2CTarget {
         for i in 0..data.len() {
             self.buffer[i] = data[i];
         }
+        self.read_idx = 0;
         Ok(())
     }
 }
@@ -71,9 +73,17 @@ impl WriteReadTarget for DummyI2CTarget {}
 
 impl RegisterAccess for DummyI2CTarget {
     fn write_register(&mut self, address: u8, data: u8) -> Result<(), Self::Error> {
+        if address as usize >= self.buffer.len() {
+            return Err(DummyI2CError::OtherError);
+        }
+        self.buffer[address as usize] = data;
         Ok(())
     }
     fn read_register(&mut self, address: u8, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        if address as usize >= self.buffer.len() {
+            return Err(DummyI2CError::OtherError);
+        }
+        buffer[0] = self.buffer[address as usize];
         Ok(1)
     }
 }
@@ -201,11 +211,16 @@ pub fn test_i2c_master(uart: &mut UartController<'_>) {
 }
 
 #[cfg(feature = "i2c_target")]
+static mut TEST_TARGET: DummyI2CTarget = DummyI2CTarget {
+    address: 0x42,
+    buffer: [0; 16],
+    read_idx: 0,
+};
+#[cfg(feature = "i2c_target")]
 pub fn test_i2c_slave(uart: &mut UartController<'_>) {
     let _peripherals = unsafe { Peripherals::steal() };
     let mut delay = DummyDelay {};
     let mut dbg_uart = UartController::new(_peripherals.uart, &mut delay);
-    let mut test_count = 100000;
 
     writeln!(uart, "\r\n####### I2C slave test #######\r\n").unwrap();
     unsafe {
@@ -237,15 +252,18 @@ pub fn test_i2c_slave(uart: &mut UartController<'_>) {
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_I2C2);
     i2c2.hardware.init(&mut i2c2.config);
 
-    match i2c2.hardware.i2c_aspeed_slave_register(0x42, None) {
-        Ok(val) => {
-            writeln!(uart, "i2c slave register ok: {:?}\r", val).unwrap();
-        }
-        Err(e) => {
-            writeln!(uart, "i2c slave register err: {:?}\r", e).unwrap();
+    unsafe {
+        match i2c2.hardware.i2c_aspeed_slave_register(TEST_TARGET.address, Some(&mut TEST_TARGET)) {
+            Ok(val) => {
+                writeln!(uart, "i2c slave register ok: {:?}\r", val).unwrap();
+            }
+            Err(e) => {
+                writeln!(uart, "i2c slave register err: {:?}\r", e).unwrap();
+            }
         }
     }
     let mut delay_slave = DummyDelay {};
+    let mut test_count = 100000;
     while test_count > 0 {
         delay_slave.delay_ms(10);
         i2c2.hardware.handle_interrupt();
