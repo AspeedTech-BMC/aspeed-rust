@@ -182,25 +182,6 @@ pub enum Error {
     ArbitrationLoss,
 }
 
-impl Error {
-    pub(crate) fn nack_addr(self) -> Self {
-        match self {
-            Error::NoAcknowledge(NoAcknowledgeSource::Unknown) => {
-                Error::NoAcknowledge(NoAcknowledgeSource::Address)
-            }
-            e => e,
-        }
-    }
-    pub(crate) fn nack_data(self) -> Self {
-        match self {
-            Error::NoAcknowledge(NoAcknowledgeSource::Unknown) => {
-                Error::NoAcknowledge(NoAcknowledgeSource::Data)
-            }
-            e => e,
-        }
-    }
-}
-
 use embedded_hal::i2c::ErrorKind;
 impl embedded_hal::i2c::Error for Error {
     fn kind(&self) -> ErrorKind {
@@ -241,12 +222,9 @@ pub struct I2cData<'a, I2CT: I2CTarget> {
     pub msg: I2cMsg<'a>,
     pub addr: u8,
     pub stop: bool,
-    pub alert_enable: bool,
-    pub bus_recover: u8,
     pub completion: bool,
     pub master_xfer_cnt: u32,
     pub slave_attached: bool,
-    pub slave_operate: u8,
     pub slave_addr_last: u8,
     pub slave_target_addr: u8,
     pub slave_target: Option<&'a mut I2CT>,
@@ -265,12 +243,9 @@ impl<'a, I2CT: I2CTarget> I2cData<'a, I2CT> {
                 },
                 addr: 0,
                 stop: false,
-                alert_enable: false,
-                bus_recover: 0,
                 completion: false,
                 master_xfer_cnt: 0,
                 slave_attached: false,
-                slave_operate: 0,
                 slave_addr_last: 0,
                 slave_target_addr: 0,
                 slave_target: None,
@@ -289,6 +264,8 @@ pub struct Ast1060I2c<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> {
     pub i2c_buff: &'static ast1060_pac::i2cbuff::RegisterBlock,
     pub xfer_mode: I2cXferMode,
     pub multi_master: bool,
+    pub smbus_alert: bool,
+    pub bus_recover: bool,
     pub mdma_buf: &'a mut DmaBuffer<ASPEED_I2C_DMA_SIZE>,
     pub sdma_buf: &'a mut DmaBuffer<I2C_SLAVE_BUF_SIZE>,
     pub i2c_data: I2cData<'a, I2CT>,
@@ -338,6 +315,9 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> HardwareInterface
             self.mdma_buf.as_ptr(),
             self.sdma_buf.as_ptr()
         );
+        self.xfer_mode = config.xfer_mode;
+        self.multi_master = config.multi_master;
+        self.smbus_alert = config.smbus_alert;
         let scu = unsafe { &*Scu::ptr() };
         // global init
         if I2CGLOBAL_INIT
@@ -381,7 +361,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> HardwareInterface
 
         // i2c reset
         self.i2c.i2cc00().write(|w| unsafe { w.bits(0) });
-        if !config.multi_master {
+        if !self.multi_master {
             self.i2c
                 .i2cc00()
                 .write(|w| w.dis_multimaster_capability_for_master_fn_only().set_bit());
@@ -409,13 +389,12 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> HardwareInterface
             "i2c init after set interrupt: {:#x}",
             self.i2c.i2cm14().read().bits()
         );
-        if config.smbus_alert {
+        if self.smbus_alert {
             self.i2c
                 .i2cm10()
                 .write(|w| w.enbl_smbus_dev_alert_int().set_bit());
         }
-        self.xfer_mode = config.xfer_mode;
-        self.multi_master = config.multi_master;
+        
         if cfg!(feature = "i2c_target") {
             i2c_debug!(self.logger, "i2c target enabled");
             // clear slave interrupts
@@ -571,7 +550,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> HardwareInterface
                 return;
             }
         }
-        self.aspeed_i2c_master_irq();
+        self.aspeed_i2c_master_irq().unwrap();
     }
 
     fn write(&mut self, addr: SevenBitAddress, bytes: &[u8]) -> Result<(), Error> {
@@ -625,7 +604,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> HardwareInterface
         self.i2c
             .i2cc00()
             .modify(|_, w| w.enbl_master_fn().bit(true));
-        self.i2c_data.bus_recover = 1;
+        self.bus_recover = true;
         //Check SDA and SCL status
         if !self.i2c.i2cc08().read().sampled_sdaline_state().bit()
             && self.i2c.i2cc08().read().sampled_sclline_state().bit()
@@ -655,6 +634,8 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
             i2c_buff: i2c_buff,
             xfer_mode: I2cXferMode::ByteMode,
             multi_master: false,
+            smbus_alert: false,
+            bus_recover: false,
             mdma_buf: mdma_buf,
             sdma_buf: sdma_buf,
             i2c_data: i2c_data,
@@ -699,7 +680,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         i2c_debug!(self.logger, "**************************");
     }
 
-    pub fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> Result<(), Error> {
+    fn aspeed_i2c_is_irq_error(&mut self, irq_status: u32) -> Result<(), Error> {
         if irq_status & AST_I2CM_ARBIT_LOSS > 0 {
             return Err(Error::ArbitrationLoss);
         }
@@ -714,7 +695,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
     //Check if current message is completed
     //If not, continue TX
     //No start
-    pub fn do_i2cm_tx(&mut self) {
+    fn do_i2cm_tx(&mut self) {
         let mut cmd = AST_I2CM_PKT_EN;
         let xfer_len: u16;
 
@@ -741,7 +722,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         }
     }
     //move data from i2c mapped buff to message buffer
-    pub fn copy_from_buff(&mut self, xfer_len: u16) {
+    fn copy_from_buff(&mut self, xfer_len: u16) {
         let count_dword = (xfer_len >> 2) as usize;
         let count_byte = (xfer_len & 0b11) as usize;
         let mut buf_index = self.i2c_data.master_xfer_cnt as usize;
@@ -764,7 +745,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
             }
         }
     }
-    pub fn copy_to_buff(&mut self, xfer_len: u16) {
+    fn copy_to_buff(&mut self, xfer_len: u16) {
         let mut buf_index = self.i2c_data.master_xfer_cnt as usize;
         let count_dword = (xfer_len >> 2) as usize;
         let count_byte = (xfer_len & 0b11) as usize;
@@ -792,7 +773,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
 
     //Check if current message is completed
     //If not, continue RX
-    pub fn do_i2cm_rx(&mut self) {
+    fn do_i2cm_rx(&mut self) {
         let mut cmd = AST_I2CM_PKT_EN;
         let xfer_len: u16;
         let msg_len = self.i2c_data.msg.length;
@@ -836,7 +817,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         }
     }
 
-    pub fn aspeed_i2c_master_package_irq(&mut self, sts: u32) -> Result<(), Error> {
+    fn aspeed_i2c_master_package_irq(&mut self, sts: u32) -> Result<(), Error> {
         i2c_debug!(self.logger, "aspeed_i2c_master_package_irq sts={:#x}", sts);
         if sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK
             || sts == AST_I2CM_PKT_ERROR | AST_I2CM_TX_NAK | AST_I2CM_NORMAL_STOP
@@ -881,13 +862,13 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
     pub fn aspeed_i2c_master_irq(&mut self) -> Result<(), Error> {
         let mut sts = self.i2c.i2cm14().read().bits();
         //i2c_debug!(self.logger, "aspeed_i2c_master_irq: sts={:#x}",sts);
-        if self.i2c_data.alert_enable {
+        if self.smbus_alert {
             sts &= !AST_I2CM_SMBUS_ALT;
         }
         if AST_I2CM_BUS_RECOVER_FAIL == AST_I2CM_BUS_RECOVER_FAIL & sts {
             self.i2c.i2cm14().write(|w| unsafe { w.bits(sts) });
-            if self.i2c_data.bus_recover > 0 {
-                self.i2c_data.bus_recover = 0;
+            if self.bus_recover {
+                self.bus_recover = false;
             }
             return Err(Error::BusRecoveryFailed);
         }
@@ -909,19 +890,16 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
                 .i2cm14()
                 .modify(|_, w| w.wcsmbus_dev_alert_intsts().bit(true));
         }
-        match self.aspeed_i2c_is_irq_error(sts) {
-            Ok(v) => {}
-            Err(e) => {
-                self.i2c.i2cm14().modify(|_, w| {
-                    w.wcpkt_cmd_done_intsts()
-                        .bit(true)
-                        .wcpkt_cmd_fail_intsts()
-                        .bit(true)
-                });
-                self.i2c_data.completion = true;
-                return Err(e);
-            }
-        }
+        let _ = self.aspeed_i2c_is_irq_error(sts).map_err(|e| {
+            self.i2c.i2cm14().modify(|_, w| {
+                w.wcpkt_cmd_done_intsts()
+                    .bit(true)
+                    .wcpkt_cmd_fail_intsts()
+                    .bit(true)
+            });
+            self.i2c_data.completion = true;
+            return e;
+        })?;
         if AST_I2CM_PKT_DONE == AST_I2CM_PKT_DONE & sts {
             sts &= !AST_I2CM_PKT_DONE;
             self.i2c
@@ -936,14 +914,11 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         Ok(())
     }
 
-    pub fn i2c_wait_completion(&mut self) -> Result<(), Error> {
+    fn i2c_wait_completion(&mut self) -> Result<(), Error> {
         let mut delay = DummyDelay {};
         let mut timeout = 1_000_000;
         while timeout > 0 && !self.i2c_data.completion {
-            match self.aspeed_i2c_master_irq() {
-                Ok(_v) => {}
-                Err(e) => return Err(e),
-            }
+            self.aspeed_i2c_master_irq()?;
             delay.delay_ns(100_000);
             timeout -= 1;
         }
@@ -952,10 +927,9 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         }
         Ok(())
     }
-    pub fn prepare_read(&mut self, addr: u8, len: u32) {
+    fn prepare_read(&mut self, addr: u8, len: u32) {
         //initialize xfer data
         self.i2c_data.addr = addr;
-        self.i2c_data.alert_enable = false;
         //read
         self.i2c_data.msg.flags = I2C_MSG_READ;
         self.i2c_data.msg.length = len;
@@ -984,7 +958,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
     pub fn prepare_write(&mut self, addr: u8, bytes: &[u8], stop: bool) {
         //initialize xfer data
         self.i2c_data.addr = addr;
-        self.i2c_data.alert_enable = false;
         self.i2c_data.msg.flags = I2C_MSG_WRITE;
         self.i2c_data.msg.length = bytes.len() as u32;
         self.i2c_data.stop = stop;
@@ -992,7 +965,7 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
         self.i2c_data.master_xfer_cnt = 0;
         match self.xfer_mode {
             I2cXferMode::DmaMode => {
-                let dest = &mut self.mdma_buf.as_mut_slice(0, bytes.len() as usize);
+                let dest = self.mdma_buf.as_mut_slice(0, bytes.len() as usize);
                 dest.copy_from_slice(bytes);
             }
             _ => {
@@ -1344,7 +1317,6 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
                 .modify(|_, w| w.wcpkt_cmd_done_intsts().bit(true));
         }
         self.i2c_slave_event_stop();
-        self.i2c_data.slave_operate = 0;
     }
     #[cfg(feature = "i2c_target")]
     pub fn aspeed_i2c_slave_irq(&mut self) -> u32 {
@@ -1836,28 +1808,11 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
             for op in ops {
                 // 2. Execute previous operations.
                 match &mut prev_op {
-                    Operation::Read(rb) => self.read(addr, rb),
-                    Operation::Write(wb) => self.write(addr, &wb),
+                    Operation::Read(rb) => self.read(addr, rb)?,
+                    Operation::Write(wb) => self.write(addr, &wb)?,
                 };
-                // 3. If operation changes type we must generate new start
-                /*match (&prev_op, &op) {
-                    (Operation::Read(_), Operation::Write(_)) => {
-                        self.prepare_write(addr)?
-                    }
-                    (Operation::Write(_), Operation::Read(_)) => {
-                        self.prepare_read(addr, false)?
-                    }
-                    _ => {} // No changes if operation have not changed
-                }*/
-
                 prev_op = op;
             }
-
-            // 4. Now, prev_op is last command use methods variations that will generate stop
-            /*match prev_op {
-                Operation::Read(rb) => self.read_wo_prepare(rb)?,
-                Operation::Write(wb) => self.write_wo_prepare(wb)?,
-            };*/
         }
 
         // Fallthrough is success
@@ -1883,33 +1838,14 @@ macro_rules! transaction_impl {
         let mut ops = $ops_slice.iter_mut();
 
         if let Some(mut prev_op) = ops.next() {
-            // 1. Generate Start for operation
-            /*match &prev_op {
-                $Operation::Read(_) => i2c.prepare_read(addr, true)?,
-                $Operation::Write(_) => i2c.prepare_write(addr)?,
-            };*/
-
             for op in ops {
                 // 2. Execute previous operations.
                 match &mut prev_op {
-                    $Operation::Read(rb) => i2c.read(addr, rb),
-                    $Operation::Write(wb) => i2c.write(addr, &wb),
+                    $Operation::Read(rb) => i2c.read(addr, rb)?,
+                    $Operation::Write(wb) => i2c.write(addr, &wb)?,
                 };
-                // 3. If operation changes type we must generate new start
-                /*match (&prev_op, &op) {
-                    ($Operation::Read(_), $Operation::Write(_)) => i2c.prepare_write(addr)?,
-                    ($Operation::Write(_), $Operation::Read(_)) => i2c.prepare_read(addr, false)?,
-                    _ => {} // No changes if operation have not changed
-                }*/
-
                 prev_op = op;
             }
-
-            // 4. Now, prev_op is last command use methods variations that will generate stop
-            /*match prev_op {
-                $Operation::Read(rb) => i2c.read_wo_prepare(rb)?,
-                $Operation::Write(wb) => i2c.write_wo_prepare(wb)?,
-            }*/
         }
     };
 }
