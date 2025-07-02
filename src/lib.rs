@@ -8,3 +8,6 @@ pub mod ecdsa;
 pub mod rsa;
 pub mod tests;
 pub mod syscon;
+pub mod i2c;
+pub mod common;
+pub mod pinctrl;
