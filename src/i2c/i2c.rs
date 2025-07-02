@@ -23,6 +23,11 @@ pub trait HardwareInterface {
         bytes: &[u8],
         buffer: &mut [u8],
     ) -> Result<(), Self::Error>;
+    fn transaction_slice(
+        &mut self,
+        addr: SevenBitAddress,
+        ops_slice: &mut [Operation<'_>],
+    ) -> Result<(), Self::Error>;
     fn handle_interrupt(&mut self);
     //fn is_bus_busy(&self) -> bool
     fn recover_bus(&mut self) -> Result<(), Self::Error>;
@@ -37,6 +42,7 @@ pub struct I2cController<H: HardwareInterface, L: Logger = NoOpLogger> {
 impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::ErrorType for I2cController<H, L> {
     type Error = H::Error;
 }
+
 impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::I2c for I2cController<H, L> {
     fn read(&mut self, addr: SevenBitAddress, buffer: &mut [u8]) -> Result<(), Self::Error> {
         self.hardware.read(addr, buffer)
@@ -60,7 +66,6 @@ impl<H: HardwareInterface, L: Logger> embedded_hal::i2c::I2c for I2cController<H
         addr: SevenBitAddress,
         operations: &mut [Operation<'_>],
     ) -> Result<(), Self::Error> {
-        //self.hardware.transaction_slice(addr, operations)
-        Ok(())
+        self.hardware.transaction_slice(addr, operations)
     }
 }

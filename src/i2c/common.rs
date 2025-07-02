@@ -45,6 +45,12 @@ pub struct I2cConfigBuilder {
     timing_config: Option<TimingConfig>,
     speed: I2cSpeed,
 }
+impl Default for I2cConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl I2cConfigBuilder {
     pub fn new() -> Self {
         Self {
