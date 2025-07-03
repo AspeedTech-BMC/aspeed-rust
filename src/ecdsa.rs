@@ -1,27 +1,35 @@
-use core::ptr::{NonNull, read_volatile, write_volatile};
-use ast1060_pac::Secure;
-use proposed_traits::ecdsa::{EcdsaVerify, Curve, SignatureForCurve, PubKeyForCurve, ErrorType as EcdsaErrorType, Error, ErrorKind};
-use proposed_traits::common::{FromBytes, ToBytes, Endian, ErrorKind as CommonErrorKind, ErrorType as CommonErrorType, SerdeError as CommonSerdeError};
-use proposed_traits::digest::DigestAlgorithm;
-use embedded_hal::delay::DelayNs;
+// Licensed under the Apache-2.0 license
 
-const ECDSA_BASE: usize = 0x7e6f2000; // SBC base address
-const ECDSA_SRAM_BASE: usize = 0x79000000; // SRAM base address for ECDSA
+use ast1060_pac::Secure;
+use core::ptr::{read_volatile, write_volatile, NonNull};
+use embedded_hal::delay::DelayNs;
+use proposed_traits::common::{
+    Endian, ErrorKind as CommonErrorKind, ErrorType as CommonErrorType, FromBytes,
+    SerdeError as CommonSerdeError, ToBytes,
+};
+use proposed_traits::digest::DigestAlgorithm;
+use proposed_traits::ecdsa::{
+    Curve, EcdsaVerify, Error, ErrorKind, ErrorType as EcdsaErrorType, PubKeyForCurve,
+    SignatureForCurve,
+};
+
+const ECDSA_BASE: usize = 0x7e6f_2000; // SBC base address
+const ECDSA_SRAM_BASE: usize = 0x7900_0000; // SRAM base address for ECDSA
 const ASPEED_ECDSA_PAR_GX: usize = 0x0a00;
 const ASPEED_ECDSA_PAR_GY: usize = 0x0a40;
-const ASPEED_ECDSA_PAR_P:  usize = 0x0a80;
-const ASPEED_ECDSA_PAR_N:  usize = 0x0ac0;
+const ASPEED_ECDSA_PAR_P: usize = 0x0a80;
+const ASPEED_ECDSA_PAR_N: usize = 0x0ac0;
 
 const SRAM_DST_GX: usize = 0x2000;
 const SRAM_DST_GY: usize = 0x2040;
-const SRAM_DST_A:  usize = 0x2140;
-const SRAM_DST_P:  usize = 0x2100;
-const SRAM_DST_N:  usize = 0x2180;
+const SRAM_DST_A: usize = 0x2140;
+const SRAM_DST_P: usize = 0x2100;
+const SRAM_DST_N: usize = 0x2180;
 const SRAM_DST_QX: usize = 0x2080;
 const SRAM_DST_QY: usize = 0x20c0;
-const SRAM_DST_R:  usize = 0x21c0;
-const SRAM_DST_S:  usize = 0x2200;
-const SRAM_DST_M:  usize = 0x2240;
+const SRAM_DST_R: usize = 0x21c0;
+const SRAM_DST_S: usize = 0x2200;
+const SRAM_DST_M: usize = 0x2240;
 
 #[derive(Debug)]
 pub enum SerdeError {
@@ -90,7 +98,6 @@ impl DigestAlgorithm for Sha384 {
 
 pub struct Secp384r1Curve;
 
-
 impl Curve for Secp384r1Curve {
     type Scalar = Scalar48;
     type DigestType = Sha384;
@@ -129,7 +136,8 @@ impl FromBytes for PublicKey {
         qy.copy_from_slice(&bytes[LEN..2 * LEN]);
         Ok(PublicKey {
             qx: Scalar48(qx),
-            qy: Scalar48(qy) })
+            qy: Scalar48(qy),
+        })
     }
 }
 
@@ -166,7 +174,8 @@ impl FromBytes for Signature {
         s.copy_from_slice(&bytes[LEN..2 * LEN]);
         Ok(Signature {
             r: Scalar48(r),
-            s: Scalar48(s),})
+            s: Scalar48(s),
+        })
     }
 }
 
@@ -210,7 +219,7 @@ impl Error for AspeedEcdsaError {
         match self {
             Self::InvalidSignature => ErrorKind::InvalidSignature,
             Self::Busy => ErrorKind::Busy,
-            _ => ErrorKind::Other,
+            Self::BadInput => ErrorKind::Other,
         }
     }
 }
@@ -229,33 +238,32 @@ impl<D: DelayNs> EcdsaErrorType for AspeedEcdsa<'_, D> {
 impl<'a, D: DelayNs> AspeedEcdsa<'a, D> {
     pub fn new(secure: &'a Secure, delay: D) -> Self {
         let ecdsa_base = unsafe { NonNull::new_unchecked(ECDSA_BASE as *mut u32) };
-        let sram_base  = unsafe { NonNull::new_unchecked(ECDSA_SRAM_BASE as *mut u32) };
+        let sram_base = unsafe { NonNull::new_unchecked(ECDSA_SRAM_BASE as *mut u32) };
 
-        Self { secure, ecdsa_base, sram_base, delay }
-    }
-
-    #[inline(always)]
-    fn sec_rd(&self, offset: usize) -> u32 {
-        unsafe {
-            read_volatile(self.ecdsa_base.as_ptr().add(offset / 4))
+        Self {
+            secure,
+            ecdsa_base,
+            sram_base,
+            delay,
         }
     }
 
-    #[inline(always)]
+    fn sec_rd(&self, offset: usize) -> u32 {
+        unsafe { read_volatile(self.ecdsa_base.as_ptr().add(offset / 4)) }
+    }
+
     fn sec_wr(&self, offset: usize, val: u32) {
         unsafe {
             write_volatile(self.ecdsa_base.as_ptr().add(offset / 4), val);
         }
     }
 
-    #[inline(always)]
     fn sram_wr_u32(&self, offset: usize, val: u32) {
         unsafe {
             write_volatile(self.sram_base.as_ptr().add(offset / 4), val);
         }
     }
 
-    #[inline(always)]
     fn sram_wr(&self, offset: usize, data: &[u8; Scalar48::LEN]) {
         for i in (0..Scalar48::LEN).step_by(4) {
             let val = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
@@ -307,18 +315,22 @@ where
                 return Err(AspeedEcdsaError::BadInput);
             }
 
-            let digest_array: &[u8; 48] = digest_bytes.try_into().map_err(|_| AspeedEcdsaError::BadInput)?;
+            let digest_array: &[u8; 48] = digest_bytes
+                .try_into()
+                .map_err(|_| AspeedEcdsaError::BadInput)?;
 
-            self.sec_wr(0x7c, 0x0100f00b);
+            self.sec_wr(0x7c, 0x0100_f00b);
 
             // Reset Engine
             self.secure.secure0b4().write(|w| w.bits(0));
-            self.secure.secure0b4().write(|w| w.sec_boot_ecceng_enbl().set_bit());
+            self.secure
+                .secure0b4()
+                .write(|w| w.sec_boot_ecceng_enbl().set_bit());
             self.delay.delay_ns(5000);
 
             self.load_secp384r1_params();
 
-            self.sec_wr(0x7c, 0x0300f00b);
+            self.sec_wr(0x7c, 0x0300_f00b);
 
             // Write qx, qy, r, s
             self.sram_wr(SRAM_DST_QX, &public_key.qx.0);
@@ -333,9 +345,13 @@ where
             self.sram_wr_u32(0x23c0, 1);
 
             // Trigger ECDSA Engine
-            self.secure.secure0bc().write(|w| w.sec_boot_ecceng_trigger_reg().set_bit());
+            self.secure
+                .secure0bc()
+                .write(|w| w.sec_boot_ecceng_trigger_reg().set_bit());
             self.delay.delay_ns(5000);
-            self.secure.secure0bc().write(|w| w.sec_boot_ecceng_trigger_reg().clear_bit());
+            self.secure
+                .secure0bc()
+                .write(|w| w.sec_boot_ecceng_trigger_reg().clear_bit());
 
             // Poll
             let mut retry = 1000;

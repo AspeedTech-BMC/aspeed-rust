@@ -1,8 +1,16 @@
-use core::ptr::{NonNull, read_volatile, write_volatile, write_bytes};
+// Licensed under the Apache-2.0 license
+
 use ast1060_pac::Secure;
-use proposed_traits::common::{FromBytes, ToBytes, Endian, ErrorKind as CommonErrorKind, ErrorType as CommonErrorType, SerdeError as CommonSerdeError};
-use proposed_traits::rsa::{RsaKeys, RsaSignature, RsaMessage, RsaKeyGen, RsaSign, RsaVerify, RsaSize, PaddingMode, Error, ErrorKind, ErrorType as RsaErrorType};
+use core::ptr::{read_volatile, write_bytes, write_volatile, NonNull};
 use embedded_hal::delay::DelayNs;
+use proposed_traits::common::{
+    Endian, ErrorKind as CommonErrorKind, ErrorType as CommonErrorType, FromBytes,
+    SerdeError as CommonSerdeError, ToBytes,
+};
+use proposed_traits::rsa::{
+    Error, ErrorKind, ErrorType as RsaErrorType, PaddingMode, RsaKeyGen, RsaKeys, RsaMessage,
+    RsaSign, RsaSignature, RsaSize, RsaVerify,
+};
 
 const RSA_SRAM_BASE: usize = 0x7900_0000; // SBC base address
 
@@ -13,7 +21,6 @@ const SRAM_DST_RESULT: usize = 0x1400;
 const SRAM_SIZE: usize = 0x1800; // SRAM size for RSA operations
 
 const RSA_MAX_LEN: usize = 0x400;
-
 
 #[derive(Debug)]
 pub enum RsaDriverError {
@@ -81,8 +88,8 @@ impl ToBytes for RsaDigest {
             return Err(SignatureSerdeError::BufferTooSmall);
         }
 
-        for i in 0..self.len {
-            dest[i] = self.data[self.len - i - 1];
+        for (i, dest_item) in dest.iter_mut().enumerate().take(self.len) {
+            *dest_item = self.data[self.len - i - 1];
         }
 
         Ok(())
@@ -112,9 +119,11 @@ impl ToBytes for RsaSignatureData {
         if dest.len() < self.len {
             return Err(SignatureSerdeError::BufferTooSmall);
         }
-        for i in 0..self.len {
-            dest[i] = self.data[self.len - i - 1];
+
+        for (i, dest_item) in dest.iter_mut().enumerate().take(self.len) {
+            *dest_item = self.data[self.len - i - 1];
         }
+
         Ok(())
     }
 }
@@ -139,13 +148,19 @@ impl CommonErrorType for RsaSignatureData {
     type Error = SignatureSerdeError;
 }
 
+#[derive(Debug)]
+pub enum PaddingError {
+    OutputTooSmall,
+    UnsupportedDigest,
+}
+
 pub struct AspeedRsa<'a, D: DelayNs> {
     pub secure: &'a Secure,
     sram_base: NonNull<u8>,
     delay: D,
 }
 
-impl <'a, D: DelayNs> AspeedRsa<'a, D> {
+impl<'a, D: DelayNs> AspeedRsa<'a, D> {
     pub fn new(secure: &'a Secure, delay: D) -> Self {
         Self {
             secure,
@@ -154,44 +169,40 @@ impl <'a, D: DelayNs> AspeedRsa<'a, D> {
         }
     }
 
-    pub fn pkcs1_v1_5_pad_inplace(
-        digest: &[u8],
-        out: &mut [u8],
-    ) -> Result<usize, ()> {
+    pub fn pkcs1_v1_5_pad_inplace(digest: &[u8], out: &mut [u8]) -> Result<usize, PaddingError> {
         const DER_SHA256: &[u8] = &[
-            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09,
-            0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
-            0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x01, 0x05, 0x00, 0x04, 0x20,
         ];
         const DER_SHA384: &[u8] = &[
-            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09,
-            0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
-            0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30,
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x02, 0x05, 0x00, 0x04, 0x30,
         ];
         const DER_SHA512: &[u8] = &[
-            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09,
-            0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
-            0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40,
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x03, 0x05, 0x00, 0x04, 0x40,
         ];
 
         let (der, hash_len) = match digest.len() {
             32 => (DER_SHA256, 32),
             48 => (DER_SHA384, 48),
             64 => (DER_SHA512, 64),
-            _ => return Err(()), // unsupported digest size
+            _ => return Err(PaddingError::UnsupportedDigest), // unsupported digest size
         };
 
         let t_len = der.len() + hash_len;
         let out_len = out.len();
 
         if out_len < t_len + 11 {
-            return Err(());
+            return Err(PaddingError::OutputTooSmall);
         }
 
         let mut idx = 0;
 
-        out[idx] = 0x00; idx += 1;
-        out[idx] = 0x01; idx += 1;
+        out[idx] = 0x00;
+        idx += 1;
+        out[idx] = 0x01;
+        idx += 1;
 
         let ps_len = out_len - t_len - 3;
         for i in 0..ps_len {
@@ -199,7 +210,8 @@ impl <'a, D: DelayNs> AspeedRsa<'a, D> {
         }
         idx += ps_len;
 
-        out[idx] = 0x00; idx += 1;
+        out[idx] = 0x00;
+        idx += 1;
 
         out[idx..idx + der.len()].copy_from_slice(der);
         idx += der.len();
@@ -243,8 +255,12 @@ impl <'a, D: DelayNs> AspeedRsa<'a, D> {
 
             let key_len = (ed_bits << 16) | m_bits;
             self.secure.secure0b0().write(|w| w.bits(key_len));
-            self.secure.secure0bc().write(|w| w.sec_boot_rsaeng_trigger_reg().set_bit());
-            self.secure.secure0bc().write(|w| w.sec_boot_rsaeng_trigger_reg().clear_bit());
+            self.secure
+                .secure0bc()
+                .write(|w| w.sec_boot_rsaeng_trigger_reg().set_bit());
+            self.secure
+                .secure0bc()
+                .write(|w| w.sec_boot_rsaeng_trigger_reg().clear_bit());
 
             let mut retry = 10000;
             loop {
@@ -282,7 +298,7 @@ impl <'a, D: DelayNs> AspeedRsa<'a, D> {
     }
 }
 
-impl <D: DelayNs> RsaErrorType for AspeedRsa<'_, D> {
+impl<D: DelayNs> RsaErrorType for AspeedRsa<'_, D> {
     type Error = RsaDriverError;
 }
 
@@ -290,23 +306,23 @@ impl<D: DelayNs> RsaMessage for AspeedRsa<'_, D> {
     type Message = RsaDigest;
 }
 
-impl <'a, D: DelayNs> RsaKeys for AspeedRsa<'a, D> {
+impl<'a, D: DelayNs> RsaKeys for AspeedRsa<'a, D> {
     type PrivateKey = RsaPrivateKey<'a>;
     type PublicKey = RsaPublicKey<'a>;
 }
 
-impl <'a, D: DelayNs> RsaSignature for AspeedRsa<'a, D>  {
+impl<D: DelayNs> RsaSignature for AspeedRsa<'_, D> {
     type Signature = RsaSignatureData;
 }
 
-impl <D: DelayNs> RsaKeyGen for AspeedRsa<'_, D>  {
+impl<D: DelayNs> RsaKeyGen for AspeedRsa<'_, D> {
     fn generate_keys(_bits: RsaSize) -> Result<(Self::PrivateKey, Self::PublicKey), Self::Error> {
         // Not supported by hardware
         Err(RsaDriverError::HardwareError)
     }
 }
 
-impl <D: DelayNs> RsaSign for AspeedRsa<'_, D>  {
+impl<D: DelayNs> RsaSign for AspeedRsa<'_, D> {
     /// Performs RSA signature generation using PKCS#1 v1.5 padding and a private key.
     ///
     /// This function pads the input message digest using PKCS#1 v1.5, triggers the RSA engine
@@ -347,7 +363,7 @@ impl <D: DelayNs> RsaSign for AspeedRsa<'_, D>  {
 
         let mut padded_input = [0u8; 512];
         let padded_len = Self::pkcs1_v1_5_pad_inplace(input, &mut padded_input[..m_len])
-            .map_err(|_| RsaDriverError::InvalidLength)?;
+            .map_err(|_e| RsaDriverError::InvalidLength)?;
         let len = self.aspeed_rsa_trigger(
             &padded_input[..padded_len],
             &mut output,
@@ -422,7 +438,8 @@ impl<D: DelayNs> RsaVerify for AspeedRsa<'_, D> {
             m,
             e,
             public_key.m_bits,
-            public_key.e_bits)?;
+            public_key.e_bits,
+        )?;
 
         if output[len.saturating_sub(message.len)..len] == message.data[..message.len] {
             Ok(RsaSignatureData {

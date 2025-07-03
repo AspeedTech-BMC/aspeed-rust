@@ -1,6 +1,7 @@
+// Licensed under the Apache-2.0 license
+
 use crate::hace_controller::{ContextCleanup, HaceController, HashAlgo, HACE_SG_EN};
-use core::convert::Infallible;
-use proposed_traits::mac::*;
+use proposed_traits::mac::{Error, ErrorKind, ErrorType, MacAlgorithm, MacInit, MacOp};
 
 // MacAlgorithm implementation for HashAlgo
 impl MacAlgorithm for HashAlgo {
@@ -139,7 +140,7 @@ where
         self.algo = A::to_hash_algo();
         self.ctx_mut().method = self.algo.hash_cmd();
         self.copy_iv_to_digest();
-        self.ctx_mut().block_size = self.algo.block_size() as u32;
+        self.ctx_mut().block_size = u32::try_from(self.algo.block_size()).unwrap();
         self.ctx_mut().bufcnt = 0;
         self.ctx_mut().digcnt = [0; 2];
         self.ctx_mut().buffer.fill(0);
@@ -155,7 +156,7 @@ where
             self.ctx_mut().key[..key.as_ref().len()].copy_from_slice(key.as_ref());
             self.ctx_mut().ipad[..key.as_ref().len()].copy_from_slice(key.as_ref());
             self.ctx_mut().opad[..key.as_ref().len()].copy_from_slice(key.as_ref());
-            self.ctx_mut().key_len = key.as_ref().len() as u32;
+            self.ctx_mut().key_len = u32::try_from(key.as_ref().len()).unwrap();
         }
 
         for i in 0..self.ctx_mut().block_size as usize {
@@ -175,11 +176,26 @@ pub struct OpContextImpl<'a, 'ctrl, A: MacAlgorithm + IntoHashAlgo> {
     _phantom: core::marker::PhantomData<A>,
 }
 
+#[derive(Debug)]
+pub struct MacError(pub ErrorKind);
+
+impl Error for MacError {
+    fn kind(&self) -> ErrorKind {
+        self.0
+    }
+}
+
+impl From<ErrorKind> for MacError {
+    fn from(kind: ErrorKind) -> Self {
+        MacError(kind)
+    }
+}
+
 impl<A> ErrorType for OpContextImpl<'_, '_, A>
 where
     A: MacAlgorithm + IntoHashAlgo,
 {
-    type Error = Infallible;
+    type Error = MacError;
 }
 
 impl<A> MacOp for OpContextImpl<'_, '_, A>
@@ -190,7 +206,7 @@ where
     type Output = A::MacOutput;
 
     fn update(&mut self, input: &[u8]) -> Result<(), Self::Error> {
-        let ctrl = &mut self.controller;
+        let ctrl: &mut HaceController = self.controller;
         let algo = ctrl.algo;
         let block_size = algo.block_size();
         let digest_size = algo.digest_size();
@@ -199,14 +215,16 @@ where
         {
             let ctx = ctrl.ctx_mut();
             ctx.digcnt[0] = block_size as u64;
-            ctx.bufcnt = block_size as u32;
+            ctx.bufcnt =
+                u32::try_from(block_size).map_err(|_| MacError(ErrorKind::InvalidInputLength))?;
 
             // H(ipad + input)
             let ipad = &ctx.ipad[..block_size];
             ctx.buffer[..algo.block_size()].copy_from_slice(ipad);
             ctx.buffer[algo.block_size()..(algo.block_size() + input.len())].copy_from_slice(input);
             ctx.digcnt[0] += input.len() as u64;
-            ctx.bufcnt += input.len() as u32;
+            ctx.bufcnt +=
+                u32::try_from(input.len()).map_err(|_| MacError(ErrorKind::InvalidInputLength))?;
             ctx.method &= !HACE_SG_EN; // Disable SG mode for key hashing
         }
 
@@ -221,7 +239,8 @@ where
         {
             let ctx = ctrl.ctx_mut();
             ctx.digcnt[0] = block_size as u64 + digest_size as u64;
-            ctx.bufcnt = block_size as u32 + digest_size as u32;
+            ctx.bufcnt = u32::try_from(block_size + digest_size)
+                .map_err(|_| MacError(ErrorKind::UpdateError))?;
             ctx.buffer[..block_size].copy_from_slice(&ctx.opad[..block_size]);
             ctx.buffer[block_size..(block_size + digest_size)].copy_from_slice(slice);
         }

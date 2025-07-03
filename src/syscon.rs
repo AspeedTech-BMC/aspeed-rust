@@ -1,5 +1,7 @@
-use embedded_hal::delay::DelayNs;
+// Licensed under the Apache-2.0 license
+
 use ast1060_pac::Scu;
+use embedded_hal::delay::DelayNs;
 
 pub struct SysCon<D: DelayNs> {
     delay: D,
@@ -17,7 +19,7 @@ impl<D: DelayNs> SysCon<D> {
                 .scu084()
                 .write(|w| w.scu080clk_stop_ctrl_clear_reg().bits(1 << 13));
 
-            self.delay.delay_ns(1000000);
+            self.delay.delay_ns(1_000_000);
 
             // Release the hace reset
             self.scu.scu044().write(|w| w.bits(0x10));

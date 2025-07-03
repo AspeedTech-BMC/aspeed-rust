@@ -32,9 +32,10 @@ _stext = ORIGIN(RAM) + 0x420;
 */
 SECTIONS
 {
-  .ram_nc (NOLOAD) : ALIGN(4)
+  .ram_nc (NOLOAD) : ALIGN(16)
   {
-    *(.ram_nc);
-    . = ALIGN(4);
-  } >RAM_NC
+    __ram_nc_start = .;
+    KEEP(*(.ram_nc));
+    __ram_nc_end = .;
+  } > RAM_NC
 }

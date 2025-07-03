@@ -1,0 +1,5 @@
+# Licensed under the Apache-2.0 license
+
+# Override the default target for xtask to run on the host
+[build]
+target-dir = "target"

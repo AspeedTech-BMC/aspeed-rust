@@ -1,3 +1,5 @@
+# Licensed under the Apache-2.0 license
+
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.backends import default_backend

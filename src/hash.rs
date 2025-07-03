@@ -1,6 +1,7 @@
+// Licensed under the Apache-2.0 license
+
 use crate::hace_controller::{ContextCleanup, HaceController, HashAlgo, HACE_SG_LAST};
-use core::convert::Infallible;
-use proposed_traits::digest::*;
+use proposed_traits::digest::{DigestAlgorithm, DigestInit, DigestOp, Error, ErrorKind, ErrorType};
 
 // DigestAlgorithm implementation for HashAlgo
 impl DigestAlgorithm for HashAlgo {
@@ -132,7 +133,7 @@ where
         self.algo = A::to_hash_algo();
         self.ctx_mut().method = self.algo.hash_cmd();
         self.copy_iv_to_digest();
-        self.ctx_mut().block_size = self.algo.block_size() as u32;
+        self.ctx_mut().block_size = u32::try_from(self.algo.block_size()).unwrap();
         self.ctx_mut().bufcnt = 0;
         self.ctx_mut().digcnt = [0; 2];
 
@@ -148,11 +149,26 @@ pub struct OpContextImpl<'a, 'ctrl, A: DigestAlgorithm + IntoHashAlgo> {
     _phantom: core::marker::PhantomData<A>,
 }
 
-impl<A> proposed_traits::digest::ErrorType for OpContextImpl<'_, '_, A>
+#[derive(Debug)]
+pub struct HashError(pub ErrorKind);
+
+impl Error for HashError {
+    fn kind(&self) -> ErrorKind {
+        self.0
+    }
+}
+
+impl From<ErrorKind> for HashError {
+    fn from(kind: ErrorKind) -> Self {
+        HashError(kind)
+    }
+}
+
+impl<A> ErrorType for OpContextImpl<'_, '_, A>
 where
     A: DigestAlgorithm + IntoHashAlgo,
 {
-    type Error = Infallible;
+    type Error = HashError;
 }
 
 impl<A> DigestOp for OpContextImpl<'_, '_, A>
@@ -162,10 +178,11 @@ where
 {
     type Output = A::DigestOutput;
 
-    fn update(&mut self, _input: &[u8]) -> Result<(), Self::Error> {
-        let input_len = _input.len() as u32;
+    fn update(&mut self, input: &[u8]) -> Result<(), Self::Error> {
+        let input_len = u32::try_from(input.len()).map_err(|_| ErrorKind::InvalidInputLength)?;
+
         let (new_len, carry) =
-            self.controller.ctx_mut().digcnt[0].overflowing_add(input_len as u64);
+            self.controller.ctx_mut().digcnt[0].overflowing_add(u64::from(input_len));
 
         self.controller.ctx_mut().digcnt[0] = new_len;
         if carry {
@@ -175,7 +192,7 @@ where
         let start = self.controller.ctx_mut().bufcnt as usize;
         let end = start + input_len as usize;
         if self.controller.ctx_mut().bufcnt + input_len < self.controller.ctx_mut().block_size {
-            self.controller.ctx_mut().buffer[start..end].copy_from_slice(_input);
+            self.controller.ctx_mut().buffer[start..end].copy_from_slice(input);
             self.controller.ctx_mut().bufcnt += input_len;
             return Ok(());
         }
@@ -189,14 +206,14 @@ where
             self.controller.ctx_mut().sg[0].addr = self.controller.ctx_mut().buffer.as_ptr() as u32;
             self.controller.ctx_mut().sg[0].len = self.controller.ctx_mut().bufcnt;
             if total_len == self.controller.ctx_mut().bufcnt {
-                self.controller.ctx_mut().sg[0].addr = _input.as_ptr() as u32;
+                self.controller.ctx_mut().sg[0].addr = input.as_ptr() as u32;
                 self.controller.ctx_mut().sg[0].len |= HACE_SG_LAST;
             }
             i += 1;
         }
 
         if total_len != self.controller.ctx_mut().bufcnt {
-            self.controller.ctx_mut().sg[i].addr = _input.as_ptr() as u32;
+            self.controller.ctx_mut().sg[i].addr = input.as_ptr() as u32;
             self.controller.ctx_mut().sg[i].len =
                 (total_len - self.controller.ctx_mut().bufcnt) | HACE_SG_LAST;
         }
@@ -208,7 +225,7 @@ where
             let src_end = src_start + remaining as usize;
 
             self.controller.ctx_mut().buffer[..(remaining as usize)]
-                .copy_from_slice(&_input[src_start..src_end]);
+                .copy_from_slice(&input[src_start..src_end]);
             self.controller.ctx_mut().bufcnt = remaining;
         }
         Ok(())

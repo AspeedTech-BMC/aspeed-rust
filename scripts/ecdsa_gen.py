@@ -1,3 +1,5 @@
+# Licensed under the Apache-2.0 license
+
 import hashlib
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
