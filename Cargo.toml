@@ -5,10 +5,12 @@ edition = "2021"
 
 [features]
 std = []
-
+spi_dma = []
+spi_dma_write = []
+spi_monitor = []
 
 [dependencies]
-ast1060-pac = { git = "https://github.com/rusty1968/ast1060-pac.git", features = ["rt"] }
+ast1060-pac = { git = "https://github.com/AspeedTech-BMC/ast1060-pac.git", features = ["rt"] }
 embedded-hal = { git = "https://github.com/rust-embedded/embedded-hal.git" , version = "1.0.0", package = "embedded-hal" }
 embedded-io = "0.6.1"
 embedded-hal-old = { git = "https://github.com/rust-embedded/embedded-hal.git" , rev = "599d44fdc7e709cb9ae6580ec11c0b7f7f102", package = "embedded-hal" }
