@@ -1,6 +1,6 @@
 // Licensed under the Apache-2.0 license
-use core::ops::{Index, IndexMut};
 use crate::uart::UartController;
+use core::ops::{Index, IndexMut};
 use embedded_io::Write;
 
 pub struct DummyDelay;
@@ -92,7 +92,7 @@ pub struct UartLogger<'a> {
 
 impl<'a> UartLogger<'a> {
     pub fn new(uart: &'a mut UartController<'a>) -> Self {
-        UartLogger{uart}
+        UartLogger { uart }
     }
 }
 

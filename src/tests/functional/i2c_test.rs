@@ -253,7 +253,10 @@ pub fn test_i2c_slave(uart: &mut UartController<'_>) {
     i2c2.hardware.init(&mut i2c2.config);
 
     unsafe {
-        match i2c2.hardware.i2c_aspeed_slave_register(TEST_TARGET.address, Some(&mut TEST_TARGET)) {
+        match i2c2
+            .hardware
+            .i2c_aspeed_slave_register(TEST_TARGET.address, Some(&mut TEST_TARGET))
+        {
             Ok(val) => {
                 writeln!(uart, "i2c slave register ok: {:?}\r", val).unwrap();
             }
