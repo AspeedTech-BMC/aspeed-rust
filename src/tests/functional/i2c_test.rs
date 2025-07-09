@@ -95,7 +95,7 @@ pub fn test_i2c_master(uart: &mut UartController<'_>) {
 
     writeln!(uart, "\r\n####### I2C master test #######\r\n").unwrap();
     unsafe {
-        dbg_uart.init(Config {
+        dbg_uart.init(&Config {
             baud_rate: 115200,
             word_length: uart::WordLength::Eight as u8,
             parity: uart::Parity::None,
@@ -224,7 +224,7 @@ pub fn test_i2c_slave(uart: &mut UartController<'_>) {
 
     writeln!(uart, "\r\n####### I2C slave test #######\r\n").unwrap();
     unsafe {
-        dbg_uart.init(Config {
+        dbg_uart.init(&Config {
             baud_rate: 115200,
             word_length: uart::WordLength::Eight as u8,
             parity: uart::Parity::None,
