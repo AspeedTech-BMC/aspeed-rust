@@ -1,10 +1,13 @@
+// Licensed under the Apache-2.0 license
+
 use crate::common::{DummyDelay, NoOpLogger, UartLogger};
 use crate::i2c::ast1060_i2c::Ast1060I2c;
 use crate::i2c::common::{I2cConfigBuilder, I2cSpeed, I2cXferMode};
-use crate::i2c::i2c::{HardwareInterface, I2cController};
+use crate::i2c::i2c_controller::{HardwareInterface, I2cController};
 use crate::pinctrl;
 use crate::uart::{self, Config, UartController};
 use ast1060_pac::Peripherals;
+#[cfg(feature = "i2c_target")]
 use embedded_hal::delay::DelayNs;
 use embedded_hal::i2c::ErrorKind;
 use embedded_io::Write;
@@ -61,9 +64,7 @@ impl ReadTarget for DummyI2CTarget {
 
 impl WriteTarget for DummyI2CTarget {
     fn on_write(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        for i in 0..data.len() {
-            self.buffer[i] = data[i];
-        }
+        self.buffer[..data.len()].copy_from_slice(data);
         self.read_idx = 0;
         Ok(())
     }
@@ -88,15 +89,16 @@ impl RegisterAccess for DummyI2CTarget {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn test_i2c_master(uart: &mut UartController<'_>) {
-    let _peripherals = unsafe { Peripherals::steal() };
+    let peripherals = unsafe { Peripherals::steal() };
     let mut delay = DummyDelay {};
-    let mut dbg_uart = UartController::new(_peripherals.uart, &mut delay);
+    let mut dbg_uart = UartController::new(peripherals.uart, &mut delay);
 
     writeln!(uart, "\r\n####### I2C master test #######\r\n").unwrap();
     unsafe {
         dbg_uart.init(&Config {
-            baud_rate: 115200,
+            baud_rate: 115_200,
             word_length: uart::WordLength::Eight as u8,
             parity: uart::Parity::None,
             stop_bits: uart::StopBits::One,
@@ -125,20 +127,20 @@ pub fn test_i2c_master(uart: &mut UartController<'_>) {
     let addr = 0x2e; //device ADT7490
     let mut buf = [0x4e];
     if true {
-        match i2c1.hardware.write(addr, &mut buf) {
+        match i2c1.hardware.write(addr, &buf) {
             Ok(val) => {
-                writeln!(uart, "i2c write ok: {:?}\r", val).unwrap();
+                writeln!(uart, "i2c write ok: {val:?}\r").unwrap();
             }
             Err(e) => {
-                writeln!(uart, "i2c write err: {:?}\r", e).unwrap();
+                writeln!(uart, "i2c write err: {e:?}\r").unwrap();
             }
         }
         match i2c1.hardware.read(addr, &mut buf) {
             Ok(val) => {
-                writeln!(uart, "i2c read ok: {:?}\r", val).unwrap();
+                writeln!(uart, "i2c read ok: {val:?}\r").unwrap();
             }
             Err(e) => {
-                writeln!(uart, "i2c read err: {:?}\r", e).unwrap();
+                writeln!(uart, "i2c read err: {e:?}\r").unwrap();
             }
         }
         writeln!(uart, "after read data {:#x}, expected: 0x81\r\n", buf[0]).unwrap();
@@ -148,20 +150,20 @@ pub fn test_i2c_master(uart: &mut UartController<'_>) {
         let mut buf = [0x0];
         for (i, &off) in reg_addr.iter().enumerate() {
             buf[0] = off;
-            match i2c1.hardware.write(addr, &mut buf) {
+            match i2c1.hardware.write(addr, &buf) {
                 Ok(val) => {
-                    writeln!(uart, "i2c write ok: {:?}\r", val).unwrap();
+                    writeln!(uart, "i2c write ok: {val:?}\r").unwrap();
                 }
                 Err(e) => {
-                    writeln!(uart, "i2c write err: {:?}\r", e).unwrap();
+                    writeln!(uart, "i2c write err: {e:?}\r").unwrap();
                 }
             }
             match i2c1.hardware.read(addr, &mut buf) {
                 Ok(val) => {
-                    writeln!(uart, "i2c read ok: {:?}\r", val).unwrap();
+                    writeln!(uart, "i2c read ok: {val:?}\r").unwrap();
                 }
                 Err(e) => {
-                    writeln!(uart, "i2c read err: {:?}\r", e).unwrap();
+                    writeln!(uart, "i2c read err: {e:?}\r").unwrap();
                 }
             }
             writeln!(
@@ -173,31 +175,31 @@ pub fn test_i2c_master(uart: &mut UartController<'_>) {
         }
         if false {
             writeln!(uart, "########### write 0x3 to offset 0x82 \r\n").unwrap();
-            let mut buf2 = [0x82, 0x3];
-            match i2c1.hardware.write(addr, &mut buf2) {
+            let buf2 = [0x82, 0x3];
+            match i2c1.hardware.write(addr, &buf2) {
                 Ok(val) => {
-                    writeln!(uart, "i2c write ok: {:?}\r", val).unwrap();
+                    writeln!(uart, "i2c write ok: {val:?}\r").unwrap();
                 }
                 Err(e) => {
-                    writeln!(uart, "i2c write err: {:?}\r", e).unwrap();
+                    writeln!(uart, "i2c write err: {e:?}\r").unwrap();
                 }
             }
             buf[0] = 0x82;
             writeln!(uart, "########### read 0x82 \r\n").unwrap();
-            match i2c1.hardware.write(addr, &mut buf) {
+            match i2c1.hardware.write(addr, &buf) {
                 Ok(val) => {
-                    writeln!(uart, "i2c write ok: {:?}\r", val).unwrap();
+                    writeln!(uart, "i2c write ok: {val:?}\r").unwrap();
                 }
                 Err(e) => {
-                    writeln!(uart, "i2c write err: {:?}\r", e).unwrap();
+                    writeln!(uart, "i2c write err: {e:?}\r").unwrap();
                 }
             }
             match i2c1.hardware.read(addr, &mut buf) {
                 Ok(val) => {
-                    writeln!(uart, "i2c read ok: {:?}\r", val).unwrap();
+                    writeln!(uart, "i2c read ok: {val:?}\r").unwrap();
                 }
                 Err(e) => {
-                    writeln!(uart, "i2c read err: {:?}\r", e).unwrap();
+                    writeln!(uart, "i2c read err: {e:?}\r").unwrap();
                 }
             }
             writeln!(
@@ -218,14 +220,14 @@ static mut TEST_TARGET: DummyI2CTarget = DummyI2CTarget {
 };
 #[cfg(feature = "i2c_target")]
 pub fn test_i2c_slave(uart: &mut UartController<'_>) {
-    let _peripherals = unsafe { Peripherals::steal() };
+    let peripherals = unsafe { Peripherals::steal() };
     let mut delay = DummyDelay {};
-    let mut dbg_uart = UartController::new(_peripherals.uart, &mut delay);
+    let mut dbg_uart = UartController::new(peripherals.uart, &mut delay);
 
     writeln!(uart, "\r\n####### I2C slave test #######\r\n").unwrap();
     unsafe {
         dbg_uart.init(&Config {
-            baud_rate: 115200,
+            baud_rate: 115_200,
             word_length: uart::WordLength::Eight as u8,
             parity: uart::Parity::None,
             stop_bits: uart::StopBits::One,
@@ -255,18 +257,18 @@ pub fn test_i2c_slave(uart: &mut UartController<'_>) {
     unsafe {
         match i2c2
             .hardware
-            .i2c_aspeed_slave_register(TEST_TARGET.address, Some(&mut TEST_TARGET))
+            .i2c_aspeed_slave_register(TEST_TARGET.address, None)
         {
             Ok(val) => {
-                writeln!(uart, "i2c slave register ok: {:?}\r", val).unwrap();
+                writeln!(uart, "i2c slave register ok: {val:?}\r").unwrap();
             }
             Err(e) => {
-                writeln!(uart, "i2c slave register err: {:?}\r", e).unwrap();
+                writeln!(uart, "i2c slave register err: {e:?}\r").unwrap();
             }
         }
     }
     let mut delay_slave = DummyDelay {};
-    let mut test_count = 100000;
+    let mut test_count = 100_000;
     while test_count > 0 {
         delay_slave.delay_ms(10);
         i2c2.hardware.handle_interrupt();

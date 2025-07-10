@@ -1,4 +1,5 @@
 // Licensed under the Apache-2.0 license
+
 use crate::uart::UartController;
 use core::ops::{Index, IndexMut};
 use embedded_io::Write;
@@ -46,13 +47,13 @@ impl<const N: usize> DmaBuffer<N> {
     }
 
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         N == 0
     }
 
     #[must_use]
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buf
+    pub fn as_slice(&self, start: usize, end: usize) -> &[u8] {
+        &self.buf[start..end]
     }
 
     pub fn as_mut_slice(&mut self, start: usize, end: usize) -> &mut [u8] {
@@ -98,11 +99,11 @@ impl<'a> UartLogger<'a> {
 
 impl<'a> Logger for UartLogger<'a> {
     fn debug(&mut self, msg: &str) {
-        writeln!(self.uart, "{}", msg).ok();
+        writeln!(self.uart, "{msg}").ok();
         write!(self.uart, "\r").ok();
     }
     fn error(&mut self, msg: &str) {
-        writeln!(self.uart, "ERROR: {}", msg).ok();
+        writeln!(self.uart, "ERROR: {msg}").ok();
         write!(self.uart, "\r").ok();
     }
 }

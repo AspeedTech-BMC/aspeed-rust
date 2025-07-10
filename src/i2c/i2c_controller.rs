@@ -1,3 +1,5 @@
+// Licensed under the Apache-2.0 license
+
 use crate::common::{Logger, NoOpLogger};
 use crate::i2c::common::I2cConfig;
 use embedded_hal::i2c::{Operation, SevenBitAddress};

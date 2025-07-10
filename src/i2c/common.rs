@@ -1,3 +1,5 @@
+// Licensed under the Apache-2.0 license
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum I2cSpeed {
@@ -52,6 +54,7 @@ impl Default for I2cConfigBuilder {
 }
 
 impl I2cConfigBuilder {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             xfer_mode: I2cXferMode::ByteMode,
@@ -62,30 +65,37 @@ impl I2cConfigBuilder {
             speed: I2cSpeed::Standard,
         }
     }
+    #[must_use]
     pub fn xfer_mode(mut self, mode: I2cXferMode) -> Self {
         self.xfer_mode = mode;
         self
     }
+    #[must_use]
     pub fn multi_master(mut self, enabled: bool) -> Self {
         self.multi_master = enabled;
         self
     }
+    #[must_use]
     pub fn smbus_alert(mut self, enabled: bool) -> Self {
         self.smbus_alert = enabled;
         self
     }
+    #[must_use]
     pub fn smbus_timeout(mut self, enabled: bool) -> Self {
         self.smbus_timeout = enabled;
         self
     }
+    #[must_use]
     pub fn speed(mut self, speed: I2cSpeed) -> Self {
         self.speed = speed;
         self
     }
+    #[must_use]
     pub fn timing_config(mut self, config: TimingConfig) -> Self {
         self.timing_config = Some(config);
         self
     }
+    #[must_use]
     pub fn build(self) -> I2cConfig {
         I2cConfig {
             xfer_mode: self.xfer_mode,
