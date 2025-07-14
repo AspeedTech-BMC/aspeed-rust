@@ -1,4 +1,4 @@
-# `Minimalist binary crate for ASPEED
+# Minimalist binary crate for ASPEED
 
 > Based on the  template for building applications for ARM Cortex-M microcontrollers
 

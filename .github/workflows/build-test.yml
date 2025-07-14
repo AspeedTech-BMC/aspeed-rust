@@ -1,0 +1,43 @@
+# Licensed under the Apache-2.0 license
+
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  precommit:
+    runs-on: ubuntu-22.04
+
+    env:
+      CARGO_INCREMENTAL: 0
+      EXTRA_CARGO_CONFIG: "target.'cfg(all())'.rustflags = [\"-Dwarnings\"]"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install packages
+        run: |
+          sudo apt-get update -qy
+          sudo apt-get install -qy build-essential curl gcc-multilib gcc-riscv64-unknown-elf git
+
+      - name: Verify Cargo.lock is up to date
+        run: |
+          cargo tree --locked > /dev/null || (
+            echo "Please update Cargo.lock"
+            cargo tree
+            git diff Cargo.lock
+            exit 1
+          )
+
+      - name: Run precommit checks (build/format/lint)
+        run: |
+          cargo --config "$EXTRA_CARGO_CONFIG" xtask precommit

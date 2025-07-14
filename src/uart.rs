@@ -1,5 +1,8 @@
+// Licensed under the Apache-2.0 license
+
 use ast1060_pac::Uart;
 use embedded_hal::delay::DelayNs;
+use embedded_io::ErrorKind;
 use embedded_io::ErrorType;
 
 #[derive(Debug)]
@@ -12,13 +15,14 @@ pub enum Uart16550Error {
 }
 
 impl embedded_io::Error for Uart16550Error {
-    fn kind(&self) -> embedded_io::ErrorKind {
+    fn kind(&self) -> ErrorKind {
         match self {
-            Uart16550Error::Overrun => embedded_io::ErrorKind::InvalidData,
-            Uart16550Error::Parity => embedded_io::ErrorKind::InvalidData,
-            Uart16550Error::Framing => embedded_io::ErrorKind::InvalidData,
-            Uart16550Error::Break => embedded_io::ErrorKind::Interrupted,
-            Uart16550Error::Unknown => embedded_io::ErrorKind::Other,
+            Uart16550Error::Overrun | Uart16550Error::Parity | Uart16550Error::Framing => {
+                ErrorKind::InvalidData
+            }
+
+            Uart16550Error::Break => ErrorKind::Interrupted,
+            Uart16550Error::Unknown => ErrorKind::Other,
         }
     }
 }
@@ -75,9 +79,10 @@ impl UartController<'_> {
     ///     uart_controller.init(config);
     /// }
     /// ```
-    pub unsafe fn init(&self, config: Config) {
+    pub unsafe fn init(&self, config: &Config) {
         // Calculate baud divisor
-        let baud_divisor = ((config.clock / 13) / (16 * config.baud_rate)) as u16; // Assuming 48 MHz clock
+        let raw = (config.clock / 13) / (16 * config.baud_rate);
+        let baud_divisor = u16::try_from(raw).unwrap();
 
         // Enable DLAB to access divisor latch registers
         self.uart.uartlcr().write(|w| w.dlab().set_bit());
@@ -140,7 +145,7 @@ impl UartController<'_> {
         // Write the byte to the Transmit Holding Register (THR)
         self.uart
             .uartthr()
-            .write(|w| unsafe { w.bits(data as u32) });
+            .write(|w| unsafe { w.bits(u32::from(data)) });
     }
 
     pub fn read_byte(&mut self) -> Result<u8, Uart16550Error> {
