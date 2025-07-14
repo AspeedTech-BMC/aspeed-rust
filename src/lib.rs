@@ -5,6 +5,7 @@ pub mod ecdsa;
 pub mod hace_controller;
 pub mod hash;
 pub mod hmac;
+pub mod pinctrl;
 pub mod rsa;
 pub mod syscon;
 pub mod tests;
