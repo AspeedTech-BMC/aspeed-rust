@@ -137,10 +137,16 @@ impl UartController<'_> {
         // Additional configurations can be added here
     }
 
+    /// Returns true if the Transmitter Holding Register (THR) is empty.
+    #[must_use]
+    pub fn is_thr_empty(&self) -> bool {
+        self.uart.uartlsr().read().thre().bit_is_set()
+    }
+
     /// Sends a byte using the FIFO.
     pub fn send_byte_fifo(&mut self, data: u8) {
         // Wait until the Transmitter Holding Register (THR) is empty
-        while self.uart.uartlsr().read().thre().bit_is_clear() {}
+        while !self.is_thr_empty() {}
 
         // Write the byte to the Transmit Holding Register (THR)
         self.uart
@@ -166,6 +172,25 @@ impl UartController<'_> {
 }
 
 impl<'a> UartController<'a> {
+    /// Reads a byte from the UART receiver buffer register (UARTRBR).
+    #[must_use]
+    pub fn read_rbr(&self) -> u8 {
+        self.uart.uartrbr().read().uartrbr().bits()
+    }
+
+    /// Returns true if data is available in the UART receiver buffer (DR bit is set).
+    #[must_use]
+    pub fn is_data_ready(&self) -> bool {
+        self.uart.uartlsr().read().dr().bit_is_set()
+    }
+
+    /// Writes a byte to the UART transmit holding register (THR).
+    pub fn write_thr(&mut self, byte: u8) {
+        self.uart
+            .uartthr()
+            .write(|w| unsafe { w.bits(u32::from(byte)) });
+    }
+
     // Wait until the Transmitter Holding Register (THR) is empty
     pub fn new(uart: Uart, delay: &'a mut dyn DelayNs) -> Self {
         Self { uart, delay }

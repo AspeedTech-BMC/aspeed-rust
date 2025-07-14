@@ -21,6 +21,7 @@ test-rsa = []
 test-ecdsa = []
 test-hmac = []
 test-hash = []
+async-io = ["embedded-io-async"]
 
 [dependencies]
 ast1060-pac = { git = "https://github.com/rusty1968/ast1060-pac.git", features = ["rt"] }
@@ -34,4 +35,8 @@ hex-literal = "0.4"
 cortex-m = { version = "0.7.5" }
 cortex-m-rt = { version = "0.6.5", features = ["device"] }
 panic-halt = "1.0.0"
+
+[dependencies.embedded-io-async]
+version = "0.6"
+optional = true
 

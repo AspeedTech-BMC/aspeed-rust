@@ -9,4 +9,7 @@ pub mod rsa;
 pub mod syscon;
 pub mod tests;
 pub mod uart;
+#[cfg(feature = "async-io")]
+pub mod uart_async;
+
 pub mod watchdog;
