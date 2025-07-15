@@ -8,5 +8,6 @@ pub mod hmac;
 pub mod rsa;
 pub mod syscon;
 pub mod tests;
+pub mod timer;
 pub mod uart;
 pub mod watchdog;
