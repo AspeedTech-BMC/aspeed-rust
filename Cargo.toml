@@ -33,6 +33,7 @@ embedded-io = "0.6.1"
 fugit = "0.3.7"
 proposed-traits = { git = "https://github.com/rusty1968/proposed_traits.git", package = "proposed-traits", rev = "85641310df5a5276c67f81621b104322cff0286c" }
 hex-literal = "0.4"
+paste = "1.0"
 
 cortex-m = { version = "0.7.5" }
 cortex-m-rt = { version = "0.6.5", features = ["device"] }
