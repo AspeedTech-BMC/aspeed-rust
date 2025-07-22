@@ -722,20 +722,12 @@ impl<'a, I2C: Instance, I2CT: I2CTarget, L: Logger> Ast1060I2c<'a, I2C, I2CT, L>
             data = self.i2c_buff.buff(i).read().bits();
             let bytes = data.to_le_bytes(); // ensures little-endian order
             self.i2c_data.msg.buf[buf_index..buf_index + 4].copy_from_slice(&bytes);
-            /*for b in 0..4 {
-                self.i2c_data.msg.buf[buf_index] = bytes[b];
-                buf_index += 1;
-            }*/
         }
 
         if count_byte > 0 {
             data = self.i2c_buff.buff(count_dword).read().bits();
             let bytes = data.to_le_bytes();
             self.i2c_data.msg.buf[buf_index..buf_index + 4].copy_from_slice(&bytes);
-            /*for b in 0..count_byte {
-                self.i2c_data.msg.buf[buf_index] = bytes[b];
-                buf_index += 1;
-            }*/
         }
     }
     fn copy_to_buff(&mut self, xfer_len: u16) {
