@@ -21,6 +21,7 @@ use aspeed_ddk::tests::functional::ecdsa_test::run_ecdsa_tests;
 use aspeed_ddk::tests::functional::gpio_test;
 use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
 use aspeed_ddk::tests::functional::hmac_test::run_hmac_tests;
+use aspeed_ddk::tests::functional::i2c_test;
 use aspeed_ddk::tests::functional::rsa_test::run_rsa_tests;
 use panic_halt as _;
 
@@ -164,8 +165,10 @@ fn main() -> ! {
     let mut rsa = AspeedRsa::new(&secure, delay);
     run_rsa_tests(&mut uart_controller, &mut rsa);
     gpio_test::test_gpioa(&mut uart_controller);
+    i2c_test::test_i2c_master(&mut uart_controller);
+    #[cfg(feature = "i2c_target")]
+    i2c_test::test_i2c_slave(&mut uart_controller);
     test_wdt(&mut uart_controller);
-
     let test_spicontroller = false;
     if test_spicontroller {
         spi::spitest::test_fmc(&mut uart_controller);
