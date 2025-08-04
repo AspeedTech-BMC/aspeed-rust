@@ -8,7 +8,7 @@ use super::{
     ASPEED_SPI_USER, ASPEED_SPI_USER_INACTIVE, SPI_CALIB_LEN, SPI_CTRL_FREQ_MASK,
     SPI_DMA_CALC_CKSUM, SPI_DMA_CALIB_MODE, SPI_DMA_DISCARD_REQ_MAGIC, SPI_DMA_ENABLE,
     SPI_DMA_FLASH_MAP_BASE, SPI_DMA_GET_REQ_MAGIC, SPI_DMA_GRANT, SPI_DMA_RAM_MAP_BASE,
-    SPI_DMA_REQUEST, SPI_DMA_STATUS, SPI_DMA_TIMEOUT,
+    SPI_DMA_REQUEST, SPI_DMA_STATUS,
 };
 
 #[cfg(feature = "spi_dma")]
@@ -644,6 +644,7 @@ impl<'a> SpiController<'a> {
             .write(|w| unsafe { w.bits(SPI_DMA_DISCARD_REQ_MAGIC) });
     }
 
+    #[allow(dead_code)]
     fn wait_for_dma_completion(&mut self, timeout: u32) -> Result<(), SpiError> {
         let mut delay = DummyDelay {};
         let mut to = timeout;
@@ -660,7 +661,7 @@ impl<'a> SpiController<'a> {
         self.dma_disable();
         Ok(())
     }
-    /*
+
     fn dma_irq_disable(&mut self) {
         // Enable the DMA interrupt bit (bit 3)
         self.regs.spi008().modify(|_, w| w.dmaintenbl().clear_bit());
@@ -670,7 +671,31 @@ impl<'a> SpiController<'a> {
         // Enable the DMA interrupt bit (bit 3)
         self.regs.spi008().modify(|_, w| w.dmaintenbl().set_bit());
     }
-    */
+
+    #[allow(dead_code)]
+    fn dbg_spi_dma(&mut self) {
+        dbg!(self, "reg 0x80: {:08x}", self.regs.spi080().read().bits());
+        dbg!(self, "reg 0x84: {:08x}", self.regs.spi084().read().bits());
+        dbg!(self, "reg 0x88: {:08x}", self.regs.spi088().read().bits());
+        dbg!(self, "reg 0x8c: {:08x}", self.regs.spi08c().read().bits());
+    }
+    pub fn handle_interrupt(&mut self) -> Result<(), SpiError> {
+        dbg!(self, "spi handle_interrupt");
+        if !self.regs.spi008().read().dmastatus().is_dma_finish() {
+            return Err(SpiError::Other("dma not finished"));
+        }
+        /* disable IRQ */
+        self.dma_irq_disable();
+
+        /* disable DMA */
+        self.dma_disable();
+
+        let cs = self.current_cs;
+        cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
+        Ok(())
+        //spi_context_complete(ctx, dev, 0);
+    }
+
     pub fn read_dma(&mut self, op: &mut SpiNorData) -> Result<(), SpiError> {
         let cs = self.current_cs;
         dbg!(self, "##### read dma ####");
@@ -705,7 +730,6 @@ impl<'a> SpiController<'a> {
 
         // Write to CSx control
         cs_ctrlreg_w!(self, cs, ctrl);
-
         self.regs
             .spi080()
             .write(|w| unsafe { w.bits(SPI_DMA_GET_REQ_MAGIC) });
@@ -732,18 +756,19 @@ impl<'a> SpiController<'a> {
             .write(|w| unsafe { w.bits(u32::try_from(read_length).unwrap()) });
 
         // Enable IRQ
-        //self.dma_irq_enable();
+        self.dma_irq_enable();
 
         // Start DMA
-        // self.regs.spi080().write(|w| unsafe { w.bits(SPI_DMA_ENABLE) });
         self.regs.spi080().modify(|_, w| {
             w.dmaenbl().enable_dma_operation();
             w.dmadirection()
                 .read_flash_move_from_flash_to_external_memory()
         });
-
-        dbg!(self, "start wait for dma");
-        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        let mut delay = DummyDelay {};
+        delay.delay_ns(1_000_000);
+        //dbg!(self, "start wait for dma");
+        //self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -794,7 +819,7 @@ impl<'a> SpiController<'a> {
             .write(|w| unsafe { w.bits(u32::try_from(op.tx_buf.len()).unwrap() - 1) });
 
         // Enable DMA IRQ if needed
-        // self.enable_dma_irq(); // implement if necessary
+        self.dma_irq_enable();
 
         // Start DMA with write direction
         self.regs.spi080().modify(|_, w| {
@@ -803,7 +828,8 @@ impl<'a> SpiController<'a> {
                 .write_flash_move_from_external_memory_to_flash()
         });
 
-        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        //self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        Ok(())
     }
 }
 

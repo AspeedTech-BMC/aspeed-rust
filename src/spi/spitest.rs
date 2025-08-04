@@ -1,4 +1,7 @@
 // Licensed under the Apache-2.0 license
+//! spitest.rs
+//! - genric test for FMC, Spi0 and Spi1: get pid, read/write w/wo read dma, no write dma
+//! - irq is not being handled in this test
 
 use super::device::ChipSelectDevice;
 use super::fmccontroller::FmcController;
@@ -31,7 +34,7 @@ pub const SPI0_MMAP_BASE: usize = 0x9000_0000;
 
 pub const SPI1_CTRL_BASE: usize = 0x7e64_0000;
 pub const SPI1_MMAP_BASE: usize = 0xb000_0000;
-const SCU_BASE: usize = 0x7E6E_2000;
+pub const SCU_BASE: usize = 0x7E6E_2000;
 pub const CTRL_REG_SIZE: usize = 0xc4;
 
 pub const SPIPF1_BASE: usize = 0x7e79_1000;
@@ -41,7 +44,7 @@ pub const SPIPF4_BASE: usize = 0x7e79_4000;
 
 pub const GPIO_BASE: usize = 0x7e78_0000;
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 #[deny(dead_code)]
 pub enum DeviceId {
     FmcCs0Idx,
@@ -273,7 +276,7 @@ pub fn test_cs<D: SpiNorDevice<Error = E>, E>(
             let _ = dev.nor_read_fast_4b_data(addr, rbuf);
         }
     }
-    delay1.delay_ns(2_000_000);
+    delay1.delay_ns(8_000_000);
 
     if test_write {
         let result: bool;
@@ -304,6 +307,7 @@ pub fn test_cs<D: SpiNorDevice<Error = E>, E>(
         // len > DMA_MIN_LENGTH {
         test_log!(uart, "Test FIFO read...buf len:  0x20");
         let _ = dev.nor_read_data(addr, &mut rbuf[0..0x20]);
+        delay1.delay_ns(8_000_000);
         astdebug::print_array_u8(uart, &rbuf[0..0x20]);
     }
 }
@@ -584,7 +588,7 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
     for (i, value) in wbuf.iter_mut().take(testsize).enumerate() {
         *value = u8::try_from(i % 255).unwrap();
     }
-    delay.delay_ns(2_000_000);
+    delay.delay_ns(8_000_000);
     test_log!(
         uartc,
         "########## start block programming size: {:08x} ",
@@ -596,7 +600,7 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
     }
 
     let _ = blockdev.read(norflashblockdevice::BlockAddrUsize(addr), rbuf);
-
+    delay.delay_ns(8_000_000);
     let result: bool;
     unsafe {
         result = core::slice::from_raw_parts(ptr_write, testsize)
@@ -668,7 +672,7 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
     let _result = spi_controller.init();
     astdebug::print_reg_u32(uart, SPI1_CTRL_BASE, 0xb0);
     let nor_read_data: SpiNorData<'_> = nor_device_read_4b_data(SPI_CS0_CAPACITY);
-    let nor_write_data = nor_device_read_4b_data(SPI_CS0_CAPACITY);
+    let nor_write_data = nor_device_write_4b_data(SPI_CS0_CAPACITY);
 
     if true {
         let mut spi_monitor2 = start_spim2();
@@ -688,7 +692,7 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
             let mut read_buf: [u8; 0x3] = [0u8; 3];
             let write_buf: [u8; 1] = [0x9f];
             let _ = flash_device.transfer(&mut read_buf, &write_buf);
-            delay1.delay_ns(2_000_000);
+            delay1.delay_ns(8_000_000);
             astdebug::print_array_u8(uart, &read_buf[..3]);
         }
 
