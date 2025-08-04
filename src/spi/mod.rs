@@ -83,7 +83,6 @@ const SPI_CALIB_LEN: usize = 0x400;
 
 #[cfg(feature = "spi_dma")]
 const SPI_DMA_TRIGGER_LEN: u32 = 128;
-const SPI_DMA_STS: u32 = 1 << 11;
 //const SPI_DMA_IRQ_EN: u32 = 1 << 3;
 #[cfg(feature = "spi_dma")]
 const SPI_DMA_WRITE: u32 = 1 << 1;
@@ -110,8 +109,8 @@ const HPLL_FREQ: u32 = 1_000_000_000;
 //const HCLK_DIV_SEL_MASK: u32 = 0b111 << 28;
 
 //const SPI_NOR_MAX_ID_LEN: u32 = 3;
-
-const SPI_DMA_TIMEOUT: u32 = 0x10000;
+#[allow(dead_code)]
+const SPI_DMA_TIMEOUT: u32 = 0x1_0000;
 const SPI_NOR_DATA_DIRECT_READ: u32 = 0x0000_0001;
 const SPI_NOR_DATA_DIRECT_WRITE: u32 = 0x0000_0002;
 

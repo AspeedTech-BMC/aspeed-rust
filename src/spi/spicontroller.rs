@@ -18,7 +18,7 @@ use crate::dbg;
 use crate::spi::{
     SPI_CONF_CE0_ENABLE_WRITE_SHIFT, SPI_CTRL_CEX_4BYTE_MODE_SET, SPI_CTRL_CEX_DUMMY_SHIFT,
     SPI_CTRL_CEX_SPI_CMD_MASK, SPI_CTRL_CEX_SPI_CMD_SHIFT, SPI_DMA_CLK_FREQ_MASK,
-    SPI_DMA_CLK_FREQ_SHIFT, SPI_DMA_DELAY_MASK, SPI_DMA_DELAY_SHIFT, SPI_DMA_STS,
+    SPI_DMA_CLK_FREQ_SHIFT, SPI_DMA_DELAY_MASK, SPI_DMA_DELAY_SHIFT,
 };
 use crate::{common::DummyDelay, spi::norflash::SpiNorData, uart::UartController};
 
@@ -644,6 +644,7 @@ impl<'a> SpiController<'a> {
             .write(|w| unsafe { w.bits(SPI_DMA_DISCARD_REQ_MAGIC) });
     }
 
+    #[allow(dead_code)]
     fn wait_for_dma_completion(&mut self, timeout: u32) -> Result<(), SpiError> {
         let mut delay = DummyDelay {};
         let mut to = timeout;
@@ -660,7 +661,7 @@ impl<'a> SpiController<'a> {
         self.dma_disable();
         Ok(())
     }
-    
+
     fn dma_irq_disable(&mut self) {
         // Enable the DMA interrupt bit (bit 3)
         self.regs.spi008().modify(|_, w| w.dmaintenbl().clear_bit());
@@ -670,18 +671,19 @@ impl<'a> SpiController<'a> {
         // Enable the DMA interrupt bit (bit 3)
         self.regs.spi008().modify(|_, w| w.dmaintenbl().set_bit());
     }
+
+    #[allow(dead_code)]
     fn dbg_spi_dma(&mut self) {
         dbg!(self, "reg 0x80: {:08x}", self.regs.spi080().read().bits());
         dbg!(self, "reg 0x84: {:08x}", self.regs.spi084().read().bits());
         dbg!(self, "reg 0x88: {:08x}", self.regs.spi088().read().bits());
         dbg!(self, "reg 0x8c: {:08x}", self.regs.spi08c().read().bits());
     }
-    pub fn handle_interrupt(&mut self) -> Result<(), SpiError>
-    {
+    pub fn handle_interrupt(&mut self) -> Result<(), SpiError> {
         dbg!(self, "spi handle_interrupt");
         if !self.regs.spi008().read().dmastatus().is_dma_finish() {
             return Err(SpiError::Other("dma not finished"));
-         }
+        }
         /* disable IRQ */
         self.dma_irq_disable();
 
@@ -691,7 +693,7 @@ impl<'a> SpiController<'a> {
         let cs = self.current_cs;
         cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
         Ok(())
-    //spi_context_complete(ctx, dev, 0);
+        //spi_context_complete(ctx, dev, 0);
     }
 
     pub fn read_dma(&mut self, op: &mut SpiNorData) -> Result<(), SpiError> {
@@ -766,7 +768,7 @@ impl<'a> SpiController<'a> {
         delay.delay_ns(1_000_000);
         //dbg!(self, "start wait for dma");
         //self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
-       Ok(())
+        Ok(())
     }
 
     #[allow(dead_code)]

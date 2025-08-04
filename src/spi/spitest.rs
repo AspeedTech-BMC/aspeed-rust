@@ -1,6 +1,6 @@
 // Licensed under the Apache-2.0 license
-//! spitest.rs 
-//! - genric test for FMC, Spi0 and Spi1: get pid, read/write w/wo read dma, no write_dma
+//! spitest.rs
+//! - genric test for FMC, Spi0 and Spi1: get pid, read/write w/wo read dma, no write dma
 //! - irq is not being handled in this test
 
 use super::device::ChipSelectDevice;

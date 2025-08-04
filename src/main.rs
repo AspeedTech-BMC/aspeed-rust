@@ -174,8 +174,7 @@ fn main() -> ! {
 
             spi::spidmairqtest::test_fmc_dma_irq(&mut uart_controller);
             spi::spidmairqtest::test_spi_dma_irq(&mut uart_controller);
-        }
-        else {
+        } else {
             spi::spitest::test_fmc(&mut uart_controller);
             spi::spitest::test_spi(&mut uart_controller);
             //gpio_test::test_gpio_flash_power(&mut uart_controller);
