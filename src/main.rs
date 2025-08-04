@@ -166,13 +166,21 @@ fn main() -> ! {
     gpio_test::test_gpioa(&mut uart_controller);
     test_wdt(&mut uart_controller);
 
-    let test_spicontroller = false;
+    let test_spicontroller = true;
+    let test_irq = true;
     if test_spicontroller {
-        spi::spitest::test_fmc(&mut uart_controller);
-        spi::spitest::test_spi(&mut uart_controller);
+        if test_irq {
+            writeln!(uart_controller, "\r\nTEST SPI IRQ!!\r\n").unwrap();
 
-        gpio_test::test_gpio_flash_power(&mut uart_controller);
-        spi::spitest::test_spi2(&mut uart_controller);
+            spi::spidmairqtest::test_fmc_dma_irq(&mut uart_controller);
+            spi::spidmairqtest::test_spi_dma_irq(&mut uart_controller);
+        }
+        else {
+            spi::spitest::test_fmc(&mut uart_controller);
+            spi::spitest::test_spi(&mut uart_controller);
+            //gpio_test::test_gpio_flash_power(&mut uart_controller);
+            // spi::spitest::test_spi2(&mut uart_controller);
+        }
     }
     // Initialize the peripherals here if needed
     loop {

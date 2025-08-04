@@ -8,7 +8,7 @@ use super::{
     ASPEED_SPI_USER, ASPEED_SPI_USER_INACTIVE, SPI_CALIB_LEN, SPI_CTRL_FREQ_MASK,
     SPI_DMA_CALC_CKSUM, SPI_DMA_CALIB_MODE, SPI_DMA_DISCARD_REQ_MAGIC, SPI_DMA_ENABLE,
     SPI_DMA_FLASH_MAP_BASE, SPI_DMA_GET_REQ_MAGIC, SPI_DMA_GRANT, SPI_DMA_RAM_MAP_BASE,
-    SPI_DMA_REQUEST, SPI_DMA_STATUS, SPI_DMA_TIMEOUT,
+    SPI_DMA_REQUEST, SPI_DMA_STATUS,
 };
 
 #[cfg(feature = "spi_dma")]
@@ -18,7 +18,7 @@ use crate::dbg;
 use crate::spi::{
     SPI_CONF_CE0_ENABLE_WRITE_SHIFT, SPI_CTRL_CEX_4BYTE_MODE_SET, SPI_CTRL_CEX_DUMMY_SHIFT,
     SPI_CTRL_CEX_SPI_CMD_MASK, SPI_CTRL_CEX_SPI_CMD_SHIFT, SPI_DMA_CLK_FREQ_MASK,
-    SPI_DMA_CLK_FREQ_SHIFT, SPI_DMA_DELAY_MASK, SPI_DMA_DELAY_SHIFT,
+    SPI_DMA_CLK_FREQ_SHIFT, SPI_DMA_DELAY_MASK, SPI_DMA_DELAY_SHIFT, SPI_DMA_STS,
 };
 use crate::{common::DummyDelay, spi::norflash::SpiNorData, uart::UartController};
 use embedded_hal::{
@@ -590,7 +590,8 @@ impl<'a> FmcController<'a> {
         }
     }
 
-    fn dma_disable(&mut self) {
+    pub fn dma_disable(&mut self) {
+        dbg!(self, "dma disable");
         self.regs.fmc080().write(|w| unsafe { w.bits(0x0) });
 
         self.regs
@@ -598,10 +599,11 @@ impl<'a> FmcController<'a> {
             .write(|w| unsafe { w.bits(SPI_DMA_DISCARD_REQ_MAGIC) });
     }
 
-    fn wait_for_dma_completion(&mut self, timeout: u32) -> Result<(), SpiError> {
+    pub fn wait_for_dma_completion(&mut self, timeout: u32) -> Result<(), SpiError> {
         let mut delay = DummyDelay {};
         let mut to = timeout;
         //wait for_dma done
+        dbg!(self, "wait_for_dma_completion");
         while !self.regs.fmc008().read().dmastatus().is_dma_finish() {
             delay.delay_ns(500);
             to -= 1;
@@ -614,14 +616,16 @@ impl<'a> FmcController<'a> {
         self.dma_disable();
         Ok(())
     }
-    /*
+
     fn dma_irq_disable(&mut self) {
         // Enable the DMA interrupt bit (bit 3)
+        dbg!(self, "dma_irq_disable");
         self.regs.fmc008().modify(|_, w| w.dmaintenbl().clear_bit());
     }
 
     fn dma_irq_enable(&mut self) {
         // Enable the DMA interrupt bit (bit 3)
+        dbg!(self, "dma_irq_enable");
         self.regs.fmc008().modify(|_, w| w.dmaintenbl().set_bit());
     }
     fn dbg_fmc_dma(&mut self) {
@@ -630,10 +634,28 @@ impl<'a> FmcController<'a> {
         dbg!(self, "reg 0x88: {:08x}", self.regs.fmc088().read().bits());
         dbg!(self, "reg 0x8c: {:08x}", self.regs.fmc08c().read().bits());
     }
-    */
+
+    pub fn handle_interrupt(&mut self) -> Result<(), SpiError>
+    {
+        dbg!(self, "handle interrupt");
+         if !self.regs.fmc008().read().dmastatus().is_dma_finish() {
+            return Err(SpiError::Other("irq error"));
+         }
+        /* disable IRQ */
+        self.dma_irq_disable();
+
+        /* disable DMA */
+        self.dma_disable();
+
+        // TODO: set it to normal read again
+        let cs = self.current_cs;
+        cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
+        Ok(())
+    }
+
     pub fn read_dma(&mut self, op: &mut SpiNorData) -> Result<(), SpiError> {
         let cs = self.current_cs;
-        dbg!(self, "##### read dma ####");
+        dbg!(self, "##### fmc read dma ####");
         dbg!(self, "device size: 0x{:08x} dv start: 0x{:08x}, read len: 0x{:08x}, rx_buf:0x{:08x} op addr: 0x{:08x}",
          self.spi_data.decode_addr[cs].len,
          self.spi_data.decode_addr[cs].start,
@@ -687,23 +709,33 @@ impl<'a> FmcController<'a> {
             .write(|w| unsafe { w.bits(u32::try_from(read_length).unwrap()) });
 
         // Enable IRQ
-        //self.dma_irq_enable();
-
+        
+        self.dma_irq_enable();
+        //self.dbg_fmc_dma();
+        
         // Start DMA
+        dbg!(self, "start dma");
         self.regs.fmc080().modify(|_, w| {
             w.dmaenbl().enable_dma_operation();
             w.dmadirection()
                 .read_flash_move_from_flash_to_external_memory()
         });
-
-        dbg!(self, "start wait for dma");
-        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        let mut delay = DummyDelay {};
+        delay.delay_ns(1_000_000);
+        //self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        Ok(())
     }
 
     #[allow(dead_code)]
     fn write_dma(&mut self, op: &mut SpiNorData) -> Result<(), SpiError> {
         let cs = self.current_cs;
         dbg!(self, "##### write_dma ####");
+        dbg!(self, "device size: 0x{:08x} dv start: 0x{:08x}, read len: 0x{:08x}, tx_buf:0x{:08x} op addr: 0x{:08x}",
+         self.spi_data.decode_addr[cs].len,
+         self.spi_data.decode_addr[cs].start,
+        op.tx_buf.len(),
+        (op.tx_buf.as_ptr() as u32),
+        op.addr);
         // Check alignment and bounds
         if op.addr % 4 != 0 || (op.tx_buf.as_ptr() as usize) % 4 != 0 {
             return Err(SpiError::AddressNotAligned(op.addr));
@@ -742,7 +774,10 @@ impl<'a> FmcController<'a> {
             .write(|w| unsafe { w.bits(u32::try_from(op.tx_buf.len()).unwrap() - 1) });
 
         // Enable DMA IRQ if needed
-        // self.enable_dma_irq(); // implement if necessary
+        self.dma_irq_enable(); 
+        //self.dbg_fmc_dma();
+        let mut delay = DummyDelay {};
+        delay.delay_ns(8_000_000);
         // Start DMA with write direction
         self.regs.fmc080().modify(|_, w| {
             w.dmaenbl().enable_dma_operation();
@@ -750,7 +785,9 @@ impl<'a> FmcController<'a> {
                 .write_flash_move_from_external_memory_to_flash()
         });
 
-        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        delay.delay_ns(8_000_000);
+       // self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+        Ok(())
     }
 }
 

@@ -15,6 +15,7 @@ pub mod fmccontroller;
 pub mod norflash;
 pub mod norflashblockdevice;
 pub mod spicontroller;
+pub mod spidmairqtest;
 pub mod spitest;
 
 #[derive(Debug)]
@@ -82,7 +83,7 @@ const SPI_CALIB_LEN: usize = 0x400;
 
 #[cfg(feature = "spi_dma")]
 const SPI_DMA_TRIGGER_LEN: u32 = 128;
-//const SPI_DMA_STS: u32 = 1 << 11;
+const SPI_DMA_STS: u32 = 1 << 11;
 //const SPI_DMA_IRQ_EN: u32 = 1 << 3;
 #[cfg(feature = "spi_dma")]
 const SPI_DMA_WRITE: u32 = 1 << 1;
