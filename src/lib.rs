@@ -12,6 +12,7 @@ pub mod pinctrl;
 pub mod rsa;
 pub mod spi;
 pub mod spimonitor;
+pub mod symmetric_cipher;
 pub mod syscon;
 pub mod tests;
 pub mod uart;
