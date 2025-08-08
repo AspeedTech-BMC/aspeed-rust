@@ -36,6 +36,7 @@ proposed-traits = { git = "https://github.com/stevenlee7189/proposed_traits.git"
 embedded-storage = "0.3"
 hex-literal = "0.4"
 heapless = "0.8.0"
+nb = "1.1.0"
 paste = "1.0"
 
 cortex-m = { version = "0.7.5" }

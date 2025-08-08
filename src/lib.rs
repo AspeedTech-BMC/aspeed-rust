@@ -15,5 +15,6 @@ pub mod spi;
 pub mod spimonitor;
 pub mod syscon;
 pub mod tests;
+pub mod timer;
 pub mod uart;
 pub mod watchdog;
