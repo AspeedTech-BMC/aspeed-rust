@@ -5,9 +5,9 @@ use core::any::TypeId;
 use core::convert::Infallible;
 use proposed_traits::digest::ErrorType as DigestErrorType;
 use proposed_traits::mac::ErrorType as MacErrorType;
-use proposed_traits::symm_cipher::ErrorType as SymmCipherErrorType;
-use proposed_traits::symm_cipher::CipherMode;
 use proposed_traits::symm_cipher::BlockCipherMode;
+use proposed_traits::symm_cipher::CipherMode;
+use proposed_traits::symm_cipher::ErrorType as SymmCipherErrorType;
 
 const SHA1_IV: [u32; 8] = [
     0x0123_4567,
@@ -141,8 +141,8 @@ pub const ASPEED_HACE_CMD: u32 = 0x10;
 // HACE_CMD bit definitions
 pub const HACE_CMD_AES_KEY_FROM_OTP: u32 = 1 << 24; // G6
 pub const HACE_CMD_MBUS_REQ_SYNC_EN: u32 = 1 << 20; // G6
-pub const HACE_CMD_DES_SG_CTRL: u32 = 1 << 19;       // G6
-pub const HACE_CMD_SRC_SG_CTRL: u32 = 1 << 18;       // G6
+pub const HACE_CMD_DES_SG_CTRL: u32 = 1 << 19; // G6
+pub const HACE_CMD_SRC_SG_CTRL: u32 = 1 << 18; // G6
 
 pub const HACE_CMD_SINGLE_DES: u32 = 0;
 pub const HACE_CMD_TRIPLE_DES: u32 = 1 << 17;
@@ -194,7 +194,6 @@ impl BlockCipherMode for Ofb {}
 pub struct Ctr;
 impl CipherMode for Ctr {}
 impl BlockCipherMode for Ctr {}
-
 
 /// Common context cleanup functionality
 pub trait ContextCleanup {
@@ -492,6 +491,15 @@ pub enum CryptoAlgo {
     Tdes,
 }
 
+pub trait HasCryptoAlgo {
+    fn algo() -> CryptoAlgo;
+}
+
+pub trait KeyMaterial {
+    fn key_len(&self) -> usize;
+    fn as_bytes(&self) -> &[u8];
+}
+
 impl SymmCipherErrorType for HaceController<'_> {
     type Error = HaceCipherError;
 }
@@ -501,7 +509,7 @@ impl HaceController<'_> {
         unsafe { &mut *Self::shared_ctx() }
     }
 
-    pub fn crypto_ctx_mut(&mut self) -> &mut AspeedCryptoContext{
+    pub fn crypto_ctx_mut(&mut self) -> &mut AspeedCryptoContext {
         unsafe { &mut *Self::shared_crypto_ctx() }
     }
 
@@ -616,27 +624,73 @@ impl HaceController<'_> {
         }
     }
 
-    pub fn setup_crypto_session<M: CipherMode + 'static>(
-        keylen: usize,
-        algo: CryptoAlgo,
-    ) -> Result<u32, HaceCipherError> {
+    pub fn assemble_cmd_from_key_mode<M, K>(
+        _key: &K,
+    ) -> Result<(u32, bool, usize, usize), HaceCipherError>
+    where
+        M: CipherMode + 'static,
+        K: HasCryptoAlgo + KeyMaterial,
+    {
         let mut cmd = HACE_CMD_DES_SG_CTRL | HACE_CMD_SRC_SG_CTRL | HACE_CMD_MBUS_REQ_SYNC_EN;
-
-        cmd |= match algo {
-            CryptoAlgo::Aes => {
-                match keylen {
-                    16 => HACE_CMD_AES_SELECT | HACE_CMD_AES_KEY_HW_EXP | HACE_CMD_AES128,
-                    24 => HACE_CMD_AES_SELECT | HACE_CMD_AES_KEY_HW_EXP | HACE_CMD_AES192,
-                    32 => HACE_CMD_AES_SELECT | HACE_CMD_AES_KEY_HW_EXP | HACE_CMD_AES256,
-                    _ => return Err(HaceCipherError::InvalidKeyLength),
-                }
-            }
-            CryptoAlgo::Des => HACE_CMD_DES_SELECT,
-            CryptoAlgo::Tdes => HACE_CMD_DES_SELECT | HACE_CMD_TRIPLE_DES,
-        };
 
         cmd |= Self::crypto_mode_to_cmd::<M>()?;
 
-        Ok(cmd)
+        let (is_aes, iv_len, key_len) = match K::algo() {
+            CryptoAlgo::Aes => {
+                cmd |= HACE_CMD_AES_SELECT | HACE_CMD_AES_KEY_HW_EXP;
+
+                let kl = _key.key_len();
+                match kl {
+                    16 => cmd |= HACE_CMD_AES128,
+                    24 => cmd |= HACE_CMD_AES192,
+                    32 => cmd |= HACE_CMD_AES256,
+                    _ => return Err(HaceCipherError::InvalidKeyLength),
+                }
+                (true, 16usize, kl)
+            }
+            CryptoAlgo::Des => {
+                if _key.key_len() != 8 {
+                    return Err(HaceCipherError::InvalidKeyLength);
+                }
+                cmd |= HACE_CMD_DES_SELECT;
+                (false, 8usize, 8usize)
+            }
+            CryptoAlgo::Tdes => {
+                if _key.key_len() != 24 {
+                    return Err(HaceCipherError::InvalidKeyLength);
+                }
+                cmd |= HACE_CMD_DES_SELECT | HACE_CMD_TRIPLE_DES;
+                (false, 8usize, 24usize)
+            }
+        };
+
+        Ok((cmd, is_aes, iv_len, key_len))
+    }
+
+    pub fn start_crypto_operation(&mut self, data_len: u32) {
+        let (src_sg_ptr, dst_sg_ptr, ctx_ptr, cmd) = {
+            let hw = self.crypto_ctx_mut();
+
+            let src = (&hw.src_sg as *const AspeedSg) as u32;
+            let dst = (&hw.dst_sg as *const AspeedSg) as u32;
+            let ctx = hw.ctx.as_ptr() as u32;
+            let cmd = hw.cmd;
+
+            (src, dst, ctx, cmd)
+        };
+
+        unsafe {
+            self.hace.hace1c().write(|w| w.crypto_intflag().set_bit());
+
+            self.hace.hace00().write(|w| w.bits(src_sg_ptr));
+            self.hace.hace04().write(|w| w.bits(dst_sg_ptr));
+            self.hace.hace08().write(|w| w.bits(ctx_ptr));
+            self.hace.hace0c().write(|w| w.bits(data_len));
+            self.hace.hace10().write(|w| w.bits(cmd));
+
+            while self.hace.hace1c().read().crypto_intflag().bit_is_clear() {
+                cortex_m::asm::nop();
+            }
+        }
     }
 }
