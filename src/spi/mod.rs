@@ -51,7 +51,6 @@ impl spi::Error for SpiError {
 
 pub trait SpiBusWithCs: SpiBus<u8, Error = SpiError> + ErrorType<Error = SpiError> {
     fn select_cs(&mut self, cs: usize) -> Result<(), SpiError>;
-    fn deselect_cs(&mut self, cs: usize) -> Result<(), SpiError>;
     fn nor_transfer(&mut self, op_info: &mut SpiNorData) -> Result<(), SpiError>;
     fn nor_read_init(&mut self, cs: usize, op_info: &SpiNorData);
     fn nor_write_init(&mut self, cs: usize, op_info: &SpiNorData);
@@ -109,8 +108,8 @@ const HPLL_FREQ: u32 = 1_000_000_000;
 //const HCLK_DIV_SEL_MASK: u32 = 0b111 << 28;
 
 //const SPI_NOR_MAX_ID_LEN: u32 = 3;
-#[allow(dead_code)]
-const SPI_DMA_TIMEOUT: u32 = 0x1_0000;
+
+const SPI_DMA_TIMEOUT: u32 = 0x10000;
 const SPI_NOR_DATA_DIRECT_READ: u32 = 0x0000_0001;
 const SPI_NOR_DATA_DIRECT_WRITE: u32 = 0x0000_0002;
 

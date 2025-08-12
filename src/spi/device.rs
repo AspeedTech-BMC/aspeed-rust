@@ -55,7 +55,6 @@ where
                 spim.spim_scu_ctrl_clear(0xf);
             }
         }
-        self.bus.deselect_cs(self.cs)?;
         Ok(())
     }
 

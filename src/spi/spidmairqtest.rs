@@ -3,7 +3,7 @@
 //! spidmairqtest.rs - DMA irq read/write test harness using static buffers and chainable callbacks
 
 use super::fmccontroller::FmcController;
-use crate::common::{DmaBuffer, DummyDelay};
+use crate::common::{self, DmaBuffer, DummyDelay};
 use crate::spi::device::ChipSelectDevice;
 use crate::spi::norflash::{SpiNorData, SpiNorDevice};
 use crate::spi::spicontroller::SpiController;
@@ -37,6 +37,7 @@ static mut SPI_DEV0_PTR: *mut ChipSelectDevice<'_, SpiController<'_>, Spipf> =
 
 static mut SPI_MONITOR0: Option<SpiMonitor<Spipf>> = None;
 
+static mut REQUST_ALLDONE: bool = true;
 // DMA operation type selector
 #[derive(Debug, Copy, Clone)]
 pub enum DmaOp {
@@ -80,7 +81,11 @@ pub extern "C" fn fmc() {
     unsafe {
         let fmc = FMC_CONTROLLER.as_mut().unwrap();
         let uart = UART_PTR.as_mut().unwrap();
-
+        let dev = match CURRENT_DEVID {
+            DeviceId::FmcCs0Idx => FMC_DEV0_PTR.as_mut().unwrap(),
+            DeviceId::FmcCs1Idx => FMC_DEV1_PTR.as_mut().unwrap(),
+            _ => todo!(),
+        };
         if let Err(e) = fmc.handle_interrupt() {
             // test done!. irq error
             writeln!(uart, "Failed: {e:?}").ok();
@@ -88,6 +93,11 @@ pub extern "C" fn fmc() {
             writeln!(uart, "fmc()").ok();
             if let Some(req) = CURRENT_DMA.take() {
                 writeln!(uart, "completed").ok();
+                if matches!(req.op, DmaOp::Program | DmaOp::ProgramFast) {
+                    writeln!(uart, "wait").ok();
+                    dev.nor_wait_until_ready();
+                }
+
                 (req.on_complete)(req.verify, req.buf_idx, req.dst_buf);
             } else {
                 writeln!(uart, "Error... no CURRENT fmc DMA").ok();
@@ -130,20 +140,22 @@ macro_rules! log_uart {
 }
 
 unsafe fn show_mmap_reg() {
-    let (_, mmap_addr, _) = spitest::device_info(CURRENT_DEVID);
+    let (_reg_base, mmap_addr, _cs_capacity) = spitest::device_info(CURRENT_DEVID);
 
     let uart = UART_PTR.as_mut().unwrap();
-    log_uart!("[{:08x}]", mmap_addr);
+    unsafe {
+        log_uart!("[{:08x}]", mmap_addr);
+    }
     astdebug::print_reg_u8(uart, mmap_addr, 0x400);
 }
 unsafe fn start_next_dma() {
-    unsafe {
-        log_uart!("start_next_dma()");
-        if DMA_QUEUE.is_empty() {
+    if DMA_QUEUE.is_empty() {
+        REQUST_ALLDONE = true;
+        unsafe {
             log_uart!("DMA queue is empty. All transfers are completed!!");
-            show_mmap_reg();
-            return;
         }
+        show_mmap_reg();
+        return;
     }
 
     if let Some(req) = DMA_QUEUE.pop_front() {
@@ -151,7 +163,9 @@ unsafe fn start_next_dma() {
         match CURRENT_DEVID {
             DeviceId::FmcCs0Idx | DeviceId::FmcCs1Idx => {
                 if let Err(e) = start_dma_fmc_transfer(CURRENT_DMA.as_mut().unwrap()) {
-                    log_uart!("Failed to start DMA transfer: {:?}", e);
+                    unsafe {
+                        log_uart!("Failed to start DMA transfer: {:?}", e);
+                    }
                 }
             }
             DeviceId::Spi0Cs0Idx
@@ -159,26 +173,29 @@ unsafe fn start_next_dma() {
             | DeviceId::Spi1Cs1Idx
             | DeviceId::Spi0Cs1Idx => {
                 if let Err(e) = start_dma_spi_transfer(CURRENT_DMA.as_mut().unwrap()) {
-                    log_uart!("Failed to start DMA transfer: {:?}", e);
+                    unsafe {
+                        log_uart!("Failed to start DMA transfer: {:?}", e);
+                    }
                 }
             }
         }
     }
 }
 
-pub fn on_complete_dma(verify: bool, idx: usize, buf: &[u8]) {
-    unsafe {
-        log_uart!("on_complete_dma");
-        if verify {
-            if verify_dma_buffer_match(idx) {
+pub fn on_complete_dma(verify: bool, idx: usize, _buf: &[u8]) {
+    if verify {
+        if verify_dma_buffer_match(idx) {
+            unsafe {
                 log_uart!("DMA test passed!!");
-            } else {
+            }
+        } else {
+            unsafe {
                 log_uart!("DMA test failed!!");
             }
-        } else if let Some(uart) = UART_PTR.as_mut() {
-            astdebug::print_array_u8(uart, buf);
         }
-    }
+    } //else if let Some(uart) = unsafe { UART_PTR.as_mut() } {
+      //      astdebug::print_array_u8(uart, buf);
+      //}
 }
 
 // Start DMA transfer using the device
@@ -265,20 +282,7 @@ pub fn verify_dma_buffer_match(i: usize) -> bool {
             return false;
         }
     }
-
-    unsafe {
-        log_uart!("All DMA buffers matched successfully!");
-    }
     true
-}
-
-pub fn fill_random(buf: &mut [u8], seed: &mut u32) {
-    for b in buf.iter_mut() {
-        *seed ^= *seed << 13;
-        *seed ^= *seed >> 17;
-        *seed ^= *seed << 5;
-        *b = (*seed & 0xFF) as u8;
-    }
 }
 
 pub fn fill_dma_buffer(op_req: DmaOp, random: bool) {
@@ -296,7 +300,7 @@ pub fn fill_dma_buffer(op_req: DmaOp, random: bool) {
             buf.fill(0x0);
 
             if random {
-                fill_random(buf, &mut seed);
+                common::fill_random(buf, &mut seed);
             }
         }
     }
@@ -305,11 +309,13 @@ pub fn fill_dma_buffer(op_req: DmaOp, random: bool) {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe fn dma_irq_chain_test(start_addrs: &[u32], op_req: DmaOp, verify: bool) {
     DMA_QUEUE.clear();
+    REQUST_ALLDONE = false;
 
-    log_uart!("irq_chain_test");
     for (i, &addr) in start_addrs.iter().enumerate() {
         if i >= MAX_DMA_CHAIN {
-            log_uart!("Too many DMA addresses; max is {}", MAX_DMA_CHAIN);
+            unsafe {
+                log_uart!("Too many DMA addresses; max is {}", MAX_DMA_CHAIN);
+            }
             break;
         }
 
@@ -328,7 +334,9 @@ pub unsafe fn dma_irq_chain_test(start_addrs: &[u32], op_req: DmaOp, verify: boo
             on_complete: on_complete_dma,
         };
         DMA_QUEUE.push_back(request).unwrap();
-        log_uart!("chaining {}", i);
+        unsafe {
+            log_uart!("chaining {}", i);
+        }
     } //for
     start_next_dma();
 }
@@ -384,6 +392,7 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
 
         CURRENT_DEVID = DeviceId::FmcCs0Idx;
         fill_dma_buffer(DmaOp::Read, true);
+        delay.delay_ns(8_000_000);
         dma_irq_chain_test(&start_addrs, DmaOp::Read, false);
 
         delay.delay_ns(8_000_000);
@@ -406,7 +415,7 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
 
         //let start_addrs = [0x0000_0000, 0x0000_0100, 0x0000_0200, 0x0000_0300];
         //let start_addrs = [0x0000_0100];
-        let read_only = true;
+        let read_only = false;
         CURRENT_DEVID = DeviceId::FmcCs1Idx;
         if read_only {
             fill_dma_buffer(DmaOp::Read, false);
@@ -419,6 +428,10 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
             // DMA write ends before finish transfering data
             // work-around: add delay
             dma_irq_chain_test(&start_addrs, DmaOp::Program, false);
+            delay.delay_ns(8_000_000);
+            if !REQUST_ALLDONE {
+                log_uart!("=ERROR: Programming race condition!!!!=");
+            }
             dma_irq_chain_test(&start_addrs, DmaOp::Read, true);
         }
     } //unsafe
@@ -428,7 +441,9 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
 
 pub fn test_spi_dma_irq(uart: &mut UartController<'_>) {
     let spi0 = unsafe { &*ast1060_pac::Spi::ptr() };
+    //let base = core::ptr::from_ref(spi0) as usize;
     let current_cs = 0;
+    let mut delay = DummyDelay {};
 
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_SPIM0_QUAD_DEFAULT);
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_SPI1_QUAD);
@@ -481,9 +496,26 @@ pub fn test_spi_dma_irq(uart: &mut UartController<'_>) {
         let start_addrs = [0x0000_0000, 0x0000_0100, 0x0000_0200, 0x0000_0300];
         //let start_addrs = [0x0000_0100];
         CURRENT_DEVID = DeviceId::Spi0Cs0Idx;
-        fill_dma_buffer(DmaOp::ReadFast, false);
-        dma_irq_chain_test(&start_addrs, DmaOp::ReadFast, false);
+
+        let read_only = true;
+        if read_only {
+            fill_dma_buffer(DmaOp::ReadFast, false);
+            dma_irq_chain_test(&start_addrs, DmaOp::ReadFast, false);
+        } else {
+            fill_dma_buffer(DmaOp::Program, true);
+            let _ = dev0.nor_sector_erase(0x0000_0000);
+            delay.delay_ns(8_000_000);
+            dma_irq_chain_test(&start_addrs, DmaOp::ProgramFast, false);
+            delay.delay_ns(8_000_000);
+            if !REQUST_ALLDONE {
+                log_uart!("=ERROR: Programming race condition!!!!=");
+            }
+            dma_irq_chain_test(&start_addrs, DmaOp::ReadFast, true);
+        }
+        log_uart!("==== End SPI0 DEV0 DMA read Test====");
     } //unsafe
+
+    scu_qspi_mux[0] = 0x0000_0000;
 }
 
 static ALLOW_CMDS: [u8; 27] = [

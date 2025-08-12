@@ -12,7 +12,7 @@ use super::{
     norflash, CommandMode, CtrlType, SpiConfig, SpiData, SpiDecodeAddress,
     SPI_NOR_DATA_DIRECT_READ, SPI_NOR_DATA_DIRECT_WRITE,
 };
-use crate::common::{DmaBuffer, DummyDelay};
+use crate::common::{self, DmaBuffer, DummyDelay};
 use crate::spi::norflashblockdevice;
 use crate::spi::norflashblockdevice::{BlockAddrUsize, NorFlashBlockDevice};
 use crate::spi::spicontroller::SpiController;
@@ -258,6 +258,7 @@ pub fn test_cs<D: SpiNorDevice<Error = E>, E>(
                 let _ = dev.nor_page_program_4b(addr, wbuf);
             }
         }
+        dev.nor_wait_until_ready();
         delay1.delay_ns(8_000_000);
     }
     // when data size is bigger than 128. use read dma
@@ -276,7 +277,7 @@ pub fn test_cs<D: SpiNorDevice<Error = E>, E>(
             let _ = dev.nor_read_fast_4b_data(addr, rbuf);
         }
     }
-    delay1.delay_ns(8_000_000);
+    delay1.delay_ns(2_000_000);
 
     if test_write {
         let result: bool;
@@ -325,7 +326,7 @@ pub fn test_fmc(uart: &mut UartController<'_>) {
     let peripherals = unsafe { Peripherals::steal() };
     let fmc_uart = peripherals.uart;
     let mut delay = DummyDelay {};
-    let mut fmc_uart_controller = UartController::new(fmc_uart, &mut delay);
+    let fmc_uart_controller = UartController::new(fmc_uart, &mut delay);
     unsafe {
         fmc_uart_controller.init(&Config {
             baud_rate: 115_200,
@@ -337,11 +338,8 @@ pub fn test_fmc(uart: &mut UartController<'_>) {
     }
 
     let mut controller = FmcController::new(
-        fmc_spi,
-        current_cs,
-        FMC_CONFIG,
-        fmc_data,
-        Some(&mut fmc_uart_controller),
+        fmc_spi, current_cs, FMC_CONFIG, fmc_data, //Some(&mut fmc_uart_controller),
+        None,
     );
 
     test_log!(uart, "FMC controller init");
@@ -389,6 +387,7 @@ pub fn test_fmc(uart: &mut UartController<'_>) {
         TEST_DATA_SIZE,
         true,
     );
+
     test_log!(uart, "################# FMC test done ! ###############");
 }
 
@@ -445,6 +444,7 @@ pub fn test_spi(uart: &mut UartController<'_>) {
 
     let nor_read_data: SpiNorData<'_> = nor_device_read_4b_data(SPI_CS0_CAPACITY);
     let nor_write_data = nor_device_write_4b_data(SPI_CS0_CAPACITY);
+
     let _ = flash_device.nor_read_init(&nor_read_data);
     let _ = flash_device.nor_write_init(&nor_write_data);
 
@@ -542,7 +542,7 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
     let uart = peripherals.uart;
     let mut delay = DummyDelay {};
     let mut uartc = UartController::new(uart, &mut delay);
-    let addr = 0x0;
+    let addr = 0x1000;
 
     unsafe {
         uartc.init(&Config {
@@ -556,8 +556,10 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
 
     let testsize = 0x400;
     let wbuf: &mut [u8] = unsafe { SPI_NC_BUFFER[WRITE_IDX].as_mut_slice(0, testsize) };
-
     let rbuf: &mut [u8] = unsafe { SPI_NC_BUFFER[READ_IDX].as_mut_slice(0, testsize) };
+
+    let mut seed = 0x179a_4e87;
+    common::fill_random(wbuf, &mut seed);
 
     test_log!(
         uartc,
@@ -584,14 +586,10 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
     let mut delay = DummyDelay {};
     test_log!(uartc, "########## start erase ");
     let _ = blockdev.erase(range);
-
-    for (i, value) in wbuf.iter_mut().take(testsize).enumerate() {
-        *value = u8::try_from(i % 255).unwrap();
-    }
-    delay.delay_ns(8_000_000);
+    delay.delay_ns(2_000_000);
     test_log!(
         uartc,
-        "########## start block programming size: {:08x} ",
+        "########## start block programming size: 0x{:08x} ",
         testsize
     );
     match blockdev.program(norflashblockdevice::BlockAddrUsize(addr), wbuf) {
@@ -614,8 +612,8 @@ pub fn test_block_device<T: SpiNorDevice>(blockdev: &mut NorFlashBlockDevice<T>)
         astdebug::print_array_u8(&mut uartc, wbuf);
         test_log!(uartc, "read buffer:");
         astdebug::print_array_u8(&mut uartc, rbuf);
-        test_log!(uartc, "Mmap buffer: {:08x}", SPI0_MMAP_BASE + addr);
-        astdebug::print_reg_u8(&mut uartc, SPI0_MMAP_BASE + addr, testsize);
+        //test_log!(uartc, "Mmap buffer: {:08x}", SPI0_MMAP_BASE + addr);
+        //astdebug::print_reg_u8(&mut uartc, SPI0_MMAP_BASE + addr, testsize);
     }
 }
 

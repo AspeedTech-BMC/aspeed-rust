@@ -23,6 +23,7 @@ test-hmac = []
 test-hash = []
 spi_dma = []
 spi_dma_write = []
+spi_dma_irq = []
 spi_monitor = []
 
 [dependencies]

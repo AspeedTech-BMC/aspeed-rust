@@ -133,7 +133,6 @@ macro_rules! start_transfer {
             }
 
             $this.bus.nor_transfer($data)?;
-            $this.bus.deselect_cs($this.cs)?;
             //SPIM deconfig
             super::spim_proprietary_post_config();
             if let Some(spim) = $this.spi_monitor.as_mut() {
@@ -239,7 +238,6 @@ where
             data_direct: SPI_NOR_DATA_DIRECT_WRITE,
         };
         start_transfer!(self, &mut nor_data);
-        self.nor_wait_until_ready();
         Ok(())
     }
 
@@ -257,7 +255,6 @@ where
             data_direct: SPI_NOR_DATA_DIRECT_WRITE,
         };
         start_transfer!(self, &mut nor_data);
-        self.nor_wait_until_ready();
         Ok(())
     }
 
@@ -274,7 +271,6 @@ where
             data_direct: SPI_NOR_DATA_DIRECT_READ,
         };
         start_transfer!(self, &mut nor_data);
-
         Ok(())
     }
 
@@ -308,7 +304,6 @@ where
             data_direct: SPI_NOR_DATA_DIRECT_WRITE,
         };
         start_transfer!(self, &mut nor_data);
-
         Ok(())
     }
 

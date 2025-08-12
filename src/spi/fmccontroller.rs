@@ -8,7 +8,7 @@ use super::{
     ASPEED_SPI_USER, ASPEED_SPI_USER_INACTIVE, SPI_CALIB_LEN, SPI_CTRL_FREQ_MASK,
     SPI_DMA_CALC_CKSUM, SPI_DMA_CALIB_MODE, SPI_DMA_DISCARD_REQ_MAGIC, SPI_DMA_ENABLE,
     SPI_DMA_FLASH_MAP_BASE, SPI_DMA_GET_REQ_MAGIC, SPI_DMA_GRANT, SPI_DMA_RAM_MAP_BASE,
-    SPI_DMA_REQUEST, SPI_DMA_STATUS,
+    SPI_DMA_REQUEST, SPI_DMA_STATUS, SPI_DMA_TIMEOUT,
 };
 
 #[cfg(feature = "spi_dma")]
@@ -480,6 +480,7 @@ impl<'a> FmcController<'a> {
 
         checksum
     }
+
     fn spi_nor_transceive_user(&mut self, op_info: &mut SpiNorData) {
         let cs: usize = self.current_cs;
         let dummy = [0u8; 12];
@@ -490,7 +491,7 @@ impl<'a> FmcController<'a> {
             u32::try_from(cs).unwrap(),
             self.spi_data.decode_addr[cs].start
         );
-
+        self.activate_user();
         // Send command
         let cmd_mode = self.spi_data.cmd_mode[cs].user
             | super::spi_io_mode_user(u32::from(super::get_cmd_buswidth(op_info.mode as u32)));
@@ -529,6 +530,7 @@ impl<'a> FmcController<'a> {
         } else {
             unsafe { spi_write_data(start_ptr, op_info.tx_buf) };
         }
+        self.deactivate_user();
     }
 
     // Helper wrappers would be defined for spi_write_data, spi_read_data, io_mode_user, etc.
@@ -599,39 +601,41 @@ impl<'a> FmcController<'a> {
             .write(|w| unsafe { w.bits(SPI_DMA_DISCARD_REQ_MAGIC) });
     }
 
-    #[allow(dead_code)]
     pub fn wait_for_dma_completion(&mut self, timeout: u32) -> Result<(), SpiError> {
         let mut delay = DummyDelay {};
         let mut to = timeout;
         //wait for_dma done
-        dbg!(self, "wait_for_dma_completion");
-        while !self.regs.fmc008().read().dmastatus().is_dma_finish() {
-            delay.delay_ns(500);
-            to -= 1;
+        #[cfg(not(feature = "spi_dma_irq"))]
+        {
+            dbg!(self, "wait_for_dma_completion");
+            while !self.regs.fmc008().read().dmastatus().is_dma_finish() {
+                delay.delay_ns(500);
+                to -= 1;
 
-            if to == 0 {
-                self.dma_disable();
-                return Err(SpiError::DmaTimeout);
+                if to == 0 {
+                    self.dma_disable();
+                    return Err(SpiError::DmaTimeout);
+                }
             }
+            self.dma_disable();
         }
-        self.dma_disable();
         Ok(())
     }
 
     fn dma_irq_disable(&mut self) {
-        // Enable the DMA interrupt bit (bit 3)
+        // disable the DMA interrupt bit (bit 3)
         dbg!(self, "dma_irq_disable");
         self.regs.fmc008().modify(|_, w| w.dmaintenbl().clear_bit());
     }
-
+    #[allow(dead_code)]
     fn dma_irq_enable(&mut self) {
         // Enable the DMA interrupt bit (bit 3)
         dbg!(self, "dma_irq_enable");
         self.regs.fmc008().modify(|_, w| w.dmaintenbl().set_bit());
     }
-
     #[allow(dead_code)]
     fn dbg_fmc_dma(&mut self) {
+        dbg!(self, "reg 0x14: {:14x}", self.regs.fmc014().read().bits());
         dbg!(self, "reg 0x80: {:08x}", self.regs.fmc080().read().bits());
         dbg!(self, "reg 0x84: {:08x}", self.regs.fmc084().read().bits());
         dbg!(self, "reg 0x88: {:08x}", self.regs.fmc088().read().bits());
@@ -649,7 +653,7 @@ impl<'a> FmcController<'a> {
         /* disable DMA */
         self.dma_disable();
 
-        // TODO: set it to normal read again
+        // Set it to normal read again
         let cs = self.current_cs;
         cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
         Ok(())
@@ -711,8 +715,10 @@ impl<'a> FmcController<'a> {
             .write(|w| unsafe { w.bits(u32::try_from(read_length).unwrap()) });
 
         // Enable IRQ
-
-        self.dma_irq_enable();
+        #[cfg(feature = "spi_dma_irq")]
+        {
+            self.dma_irq_enable();
+        }
         //self.dbg_fmc_dma();
 
         // Start DMA
@@ -722,10 +728,8 @@ impl<'a> FmcController<'a> {
             w.dmadirection()
                 .read_flash_move_from_flash_to_external_memory()
         });
-        let mut delay = DummyDelay {};
-        delay.delay_ns(1_000_000);
-        //self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
-        Ok(())
+
+        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
     }
 
     #[allow(dead_code)]
@@ -738,6 +742,7 @@ impl<'a> FmcController<'a> {
         op.tx_buf.len(),
         (op.tx_buf.as_ptr() as u32),
         op.addr);
+        //self.dbg_fmc_dma();
         // Check alignment and bounds
         if op.addr % 4 != 0 || (op.tx_buf.as_ptr() as usize) % 4 != 0 {
             return Err(SpiError::AddressNotAligned(op.addr));
@@ -774,22 +779,43 @@ impl<'a> FmcController<'a> {
         self.regs
             .fmc08c()
             .write(|w| unsafe { w.bits(u32::try_from(op.tx_buf.len()).unwrap() - 1) });
+        //self.dbg_fmc_dma();
 
         // Enable DMA IRQ if needed
-        self.dma_irq_enable();
-        //self.dbg_fmc_dma();
-        let mut delay = DummyDelay {};
-        delay.delay_ns(8_000_000);
+        #[cfg(feature = "spi_dma_irq")]
+        {
+            self.dma_irq_enable();
+        }
+
         // Start DMA with write direction
         self.regs.fmc080().modify(|_, w| {
             w.dmaenbl().enable_dma_operation();
             w.dmadirection()
                 .write_flash_move_from_external_memory_to_flash()
         });
+        self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
+    }
 
-        delay.delay_ns(8_000_000);
-        // self.wait_for_dma_completion(SPI_DMA_TIMEOUT)
-        Ok(())
+    fn activate_user(&mut self) {
+        let cs = self.current_cs;
+        let user_reg = self.spi_data.cmd_mode[cs].user;
+        cs_ctrlreg_w!(self, cs, user_reg | ASPEED_SPI_USER_INACTIVE);
+        cs_ctrlreg_w!(self, cs, user_reg);
+        dbg!(self, "activate cs:{}", u32::try_from(cs).unwrap());
+    }
+
+    fn deactivate_user(&mut self) {
+        let cs = self.current_cs;
+        let user_reg = self.spi_data.cmd_mode[cs].user;
+
+        cs_ctrlreg_w!(self, cs, user_reg | ASPEED_SPI_USER_INACTIVE);
+        cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
+        dbg!(self, "deactivate cs:{}", u32::try_from(cs).unwrap());
+        dbg!(
+            self,
+            "normal read:{:08x}",
+            self.spi_data.cmd_mode[cs].normal_read
+        );
     }
 }
 
@@ -797,18 +823,23 @@ impl<'a> SpiBus<u8> for FmcController<'a> {
     // we only use mmap for all transaction
     fn read(&mut self, buffer: &mut [u8]) -> Result<(), SpiError> {
         let ahb_addr = self.spi_data.decode_addr[self.current_cs].start as usize as *const u32;
+        self.activate_user();
         unsafe { spi_read_data(ahb_addr, buffer) };
+        self.deactivate_user();
         Ok(())
     }
 
     fn write(&mut self, buffer: &[u8]) -> Result<(), SpiError> {
         let ahb_addr = self.spi_data.decode_addr[self.current_cs].start as usize as *mut u32;
+        self.activate_user();
         unsafe { spi_write_data(ahb_addr, buffer) };
+        self.deactivate_user();
         Ok(())
     }
 
     fn transfer(&mut self, rd_buffer: &mut [u8], wr_buffer: &[u8]) -> Result<(), SpiError> {
         let cs = self.current_cs;
+        self.activate_user();
         if !wr_buffer.is_empty() {
             let ahb_addr = self.spi_data.decode_addr[cs].start as usize as *mut u32;
             unsafe { spi_write_data(ahb_addr, wr_buffer) };
@@ -819,6 +850,7 @@ impl<'a> SpiBus<u8> for FmcController<'a> {
             // Read RX buffer
             unsafe { super::spi_read_data(ahb_addr, rd_buffer) };
         }
+        self.deactivate_user();
         Ok(())
     }
 
@@ -833,30 +865,10 @@ impl<'a> SpiBus<u8> for FmcController<'a> {
 
 impl<'a> SpiBusWithCs for FmcController<'a> {
     fn select_cs(&mut self, cs: usize) -> Result<(), SpiError> {
-        let user_reg = self.spi_data.cmd_mode[cs].user;
         if cs > self.spi_config.max_cs {
             return Err(SpiError::CsSelectFailed(cs));
         }
         self.current_cs = cs;
-        cs_ctrlreg_w!(self, cs, user_reg | ASPEED_SPI_USER_INACTIVE);
-        cs_ctrlreg_w!(self, cs, user_reg);
-        dbg!(self, "activate cs:{}", u32::try_from(cs).unwrap());
-        Ok(())
-    }
-
-    fn deselect_cs(&mut self, cs: usize) -> Result<(), SpiError> {
-        let user_reg = self.spi_data.cmd_mode[cs].user;
-        if cs > self.spi_config.max_cs {
-            return Err(SpiError::CsSelectFailed(cs));
-        }
-        cs_ctrlreg_w!(self, cs, user_reg | ASPEED_SPI_USER_INACTIVE);
-        cs_ctrlreg_w!(self, cs, self.spi_data.cmd_mode[cs].normal_read);
-        dbg!(self, "deactivate cs:{}", u32::try_from(cs).unwrap());
-        dbg!(
-            self,
-            "normal read:{:08x}",
-            self.spi_data.cmd_mode[cs].normal_read
-        );
         Ok(())
     }
 
