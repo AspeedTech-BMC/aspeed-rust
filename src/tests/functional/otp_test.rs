@@ -533,7 +533,7 @@ pub fn test_otp(uart: &mut UartController<'_>) {
     //test otpcfg
     if false {
         test_otp_read_conf(uart, &mut otp_controller, 0);
-        //test_otp_write_conf_b(uart, &mut otp_controller, 0, 5, 1);
+        test_otp_write_conf_b(uart, &mut otp_controller, 0, 5, 1);
         //test_otp_write_conf_b(uart, &mut otp_controller, 0, 5, 1);
         //test_otp_write_conf_b(uart, &mut otp_controller, 0, 5, 0);
         test_otp_write_conf_d(uart, &mut otp_controller, 5);
@@ -541,14 +541,14 @@ pub fn test_otp(uart: &mut UartController<'_>) {
     }
 
     //test otpstrap
-    if true {
+    if false {
         test_otp_read_strap(uart, &mut otp_controller, 0, 32);
         for i in 1u8..8 {
             test_otp_write_strap_b(uart, &mut otp_controller, 0, i & 0x1);
         }
 
-        //let strap: [u32; 2] = [0xffff_ffff, 0xffff_ffff];
-        //test_otp_write_strap_d(uart, &mut otp_controller, 30, &strap);
+        let strap: [u32; 2] = [0xffff_ffff, 0xffff_ffff];
+        test_otp_write_strap_d(uart, &mut otp_controller, 30, &strap);
 
         test_otp_read_strap(uart, &mut otp_controller, 0, 64);
     }
@@ -556,7 +556,7 @@ pub fn test_otp(uart: &mut UartController<'_>) {
     //test otpdata
     if false {
         test_otp_read_data(uart, &mut otp_controller, 0);
-        //test_otp_write_data_b(uart, &mut otp_controller, 0, 0, 0);
+        test_otp_write_data_b(uart, &mut otp_controller, 0, 0, 0);
 
         let data = [0xabcd_dead, 0x1234_5678];
         test_otp_write_data_d(uart, &mut otp_controller, 4, &data);

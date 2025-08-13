@@ -18,9 +18,7 @@ impl<L: Logger> OtpMemory<u32> for OtpController<L> {
     ///
     fn read(&self, address: usize) -> Result<u32, Self::Error> {
         let mut buffer: [u32; 1] = [0];
-        if let Err(e) = self.read_region(AspeedOtpRegion::Data, address, &mut buffer) {
-            return Err(e);
-        }
+        self.read_region(AspeedOtpRegion::Data, address, &mut buffer)?;
         Ok(buffer[0])
     }
     fn write(&mut self, address: usize, data: u32) -> Result<(), Self::Error> {
@@ -35,7 +33,12 @@ impl<L: Logger> OtpMemory<u32> for OtpController<L> {
         }
         otp_data[0] = self.read(address)?;
         buffer[0] = data;
-        self.otp_prog_verify_2dw(address as u32, &otp_data, &buffer, &ignore_mask)
+        self.otp_prog_verify_2dw(
+            u32::try_from(address).unwrap(),
+            &otp_data,
+            &buffer,
+            &ignore_mask,
+        )
     }
 
     fn lock(&mut self) -> Result<(), Self::Error> {
@@ -82,7 +85,7 @@ impl<L: Logger> OtpSession for OtpController<L> {
         self.update_prot_info(&mut session_info);
         session_info.chip_version = self.chip_version();
         session_info.tool_version[..ver_bytes.len()].copy_from_slice(ver_bytes);
-        session_info.key_count = self.get_key_count() as u32;
+        session_info.key_count = u32::from(self.get_key_count());
 
         self.session_active = true;
 
@@ -116,7 +119,7 @@ impl<L: Logger> OtpRegions<u32> for OtpController<L> {
     ///
     /// # Parameters
     /// - `region`: The region to read from
-    /// - `offset`: Offset within the region. For strap, it's strap_bit_offset
+    /// - `offset`: Offset within the region. For strap, it's `strap_bit_offset`
     /// - `buffer`: Buffer to store read data
     ///
     /// # Returns
@@ -130,7 +133,9 @@ impl<L: Logger> OtpRegions<u32> for OtpController<L> {
     ) -> Result<(), Self::Error> {
         match region {
             AspeedOtpRegion::Data => self.aspeed_otp_read_data(offset, buffer),
-            AspeedOtpRegion::Configuration => self.aspeed_otp_read_conf(offset as u32, buffer),
+            AspeedOtpRegion::Configuration => {
+                self.aspeed_otp_read_conf(u32::try_from(offset).unwrap(), buffer)
+            }
             AspeedOtpRegion::Strap => {
                 if buffer.len() < 2 {
                     return Err(OtpError::InvalidBufSize);
@@ -146,17 +151,15 @@ impl<L: Logger> OtpRegions<u32> for OtpController<L> {
                     Ok(()) => {
                         buffer[0] = 0;
                         for i in 0usize..32 {
-                            buffer[0] |= (strap_status[i].value as u32) << i;
+                            buffer[0] |= u32::from(strap_status[i].value) << i;
                         }
                         buffer[1] = 0;
                         for i in 32usize..64 {
-                            buffer[1] |= (strap_status[i].value as u32) << (i - 32);
+                            buffer[1] |= u32::from(strap_status[i].value) << (i - 32);
                         }
-                        return Ok(());
+                        Ok(())
                     }
-                    Err(e) => {
-                        return Err(e);
-                    }
+                    Err(e) => Err(e),
                 }
             }
             AspeedOtpRegion::ScuProtection => self.aspeed_otp_read_scuprot(offset, buffer),
@@ -167,7 +170,7 @@ impl<L: Logger> OtpRegions<u32> for OtpController<L> {
     ///
     /// # Parameters
     /// - `region`: The region to write to
-    /// - `offset`: Offset within the region. For strap, it's strap_bit_offset
+    /// - `offset`: Offset within the region. For strap, it's `strap_bit_offset`
     /// - `data`: Data to write
     ///
     /// # Returns

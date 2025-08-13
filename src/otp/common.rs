@@ -1,4 +1,4 @@
-use proposed_traits::otp::*;
+use proposed_traits::otp::ErrorKind;
 /// ASPEED chip version information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AspeedChipVersion {
@@ -49,7 +49,10 @@ pub enum OtpError {
     UnknowRevID,
     Unknown,
 }
-use crate::otp::common::OtpError::*;
+use crate::otp::common::OtpError::{
+    AlignmentError, BoundaryError, InvalidBufSize, NoSession, RegionProtected, Timeout,
+    UnknowRevID, VerificationFailed, WriteExhausted,
+};
 impl proposed_traits::otp::Error for OtpError {
     fn kind(&self) -> ErrorKind {
         match *self {

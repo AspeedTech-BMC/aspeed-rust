@@ -1,6 +1,6 @@
 use crate::{
     common::{DummyDelay, Logger},
-    otp::common::*,
+    otp::common::{AspeedChipVersion, AspeedOtpRegion, OtpError, SessionInfo, StrapStatus},
 };
 use ast1060_pac::{Scu, Secure};
 use core::fmt::Debug;
@@ -57,17 +57,17 @@ const ID0_AST1060A2: u32 = 0xA003_0000;
 const ID1_AST1060A2: u32 = 0xA003_0000;
 const ID0_AST1060A2_ENG: u32 = 0x8003_0000;
 const ID1_AST1060A2_ENG: u32 = 0x8003_0000;
-const OTP_AST1060A1: u32 = 3;
-const OTP_AST1060A2: u32 = 4;
+//const OTP_AST1060A1: u32 = 3;
+//const OTP_AST1060A2: u32 = 4;
 const OTP_PASSWD: u32 = 0x349f_e38a;
 const OTP_READ_CMD: u32 = 0x23b1_e361;
 const OTP_WRITE_CMD: u32 = 0x23b1_e362;
-const OTP_COMP_CMD: u32 = 0x23b1_e363;
+//const OTP_COMP_CMD: u32 = 0x23b1_e363;
 const OTP_PROG_CMD: u32 = 0x23b1_e364;
 
 const OTP_MEM_LIMIT: u32 = 2144; //67kbits
 const OTP_MEM_LIMIT_DATA: usize = 2048;
-const OTP_MEM_ECC_OFFSET: u32 = 1792; //DWORD
+//const OTP_MEM_ECC_OFFSET: u32 = 1792; //DWORD
 
 /// timing
 const OTP_TIMING_200US: u32 = 0x0419_1388;
@@ -291,7 +291,7 @@ impl<L: Logger> OtpController<L> {
     pub fn otp_read_data_region(&self) -> Result<(), OtpError> {
         for i in (0..OTP_MEM_LIMIT_DATA).step_by(2) {
             unsafe {
-                self.otp_read_data(i as u32, &mut DATA_REGION[i..i + 1])?;
+                self.otp_read_data(u32::try_from(i).unwrap(), &mut DATA_REGION[i..=i])?;
             }
         }
         Ok(())
@@ -315,8 +315,8 @@ impl<L: Logger> OtpController<L> {
     /// # Arguments
     ///
     /// * `reg_idx` - OTPCFG register number eg. 1-OTPCFG1
-    /// The address offset: 0x800 (OTPFCG0),0x802 (OTPFCG1)
-    /// A00(OTPCFG8-15), C00(OTPCFG16-31)
+    ///   The address offset: 0x800 (OTPFCG0),0x802 (OTPFCG1)
+    ///   A00(OTPCFG8-15), C00(OTPCFG16-31)
     fn otp_read_conf_idx(&self, reg_idx: u32) -> Result<u32, OtpError> {
         let mut addr = OTP_CONF_OFFSET;
 
@@ -333,12 +333,13 @@ impl<L: Logger> OtpController<L> {
             self.sb
                 .secure004()
                 .write(|w| unsafe { w.bits(OTP_PROG_CMD) });
-            if !self.wait_complete() {
-                Err(OtpError::Timeout)
-            } else {
+            if self.wait_complete() {
                 Ok(())
+            } else {
+                Err(OtpError::Timeout)
             }
         } else {
+            otp_error!(self.logger, "otp_prog failed");
             Err(OtpError::WriteFailed)
         }
     }
@@ -383,14 +384,13 @@ impl<L: Logger> OtpController<L> {
     }
     fn verify_bit(&mut self, value: u32, otp_addr: u32, bit_offset: u32) -> Result<(), OtpError> {
         let mut ret: [u32; 2] = [0, 0];
-        let addr: u32;
         let mut success: bool = false;
-        if otp_addr & 0x1 == 0 {
-            addr = otp_addr;
+        let addr: u32 = if otp_addr & 0x1 == 0 {
+            otp_addr
         } else {
             //make it even
-            addr = otp_addr - 1;
-        }
+            otp_addr - 1
+        };
         self.otp_read_data(addr, &mut ret)?;
 
         if otp_addr & 0x1 == 0 {
@@ -423,7 +423,7 @@ impl<L: Logger> OtpController<L> {
         self.otp_soak(OtpSoak::NormalProg);
         self.otp_prog_bit_helper(value, address, bit_offset)?;
         for _i in 0..OTP_OP_RETRIES {
-            if !self.verify_bit(value, address, bit_offset).is_ok() {
+            if self.verify_bit(value, address, bit_offset).is_err() {
                 self.otp_soak(OtpSoak::SoakProg);
                 self.otp_prog_bit_helper(value, address, bit_offset)?;
                 if self.verify_bit(value, address, bit_offset).is_ok() {
@@ -482,14 +482,14 @@ impl<L: Logger> OtpController<L> {
     ///
     pub fn verify_dw(&self, address: u32, data: u32, ignore: u32, compare: &mut u32) -> bool {
         let mut ret: [u32; 2] = [0, 0];
-        let addr;
+
         let otp_addr = address & !(1 << 15);
 
-        if otp_addr & 0x1 == 0 {
-            addr = otp_addr;
+        let addr = if otp_addr & 0x1 == 0 {
+            otp_addr
         } else {
-            addr = otp_addr - 1;
-        }
+            otp_addr - 1
+        };
         if self.otp_read_data(addr, &mut ret) != Ok(()) {
             return false;
         }
@@ -627,7 +627,10 @@ impl<L: Logger> OtpController<L> {
         }
         pass = false;
         for _j in 0..OTP_OP_RETRIES {
-            if !self.verify_2dw(address, buffer, &ignore_mask, verify_size, &mut compare) {
+            if self.verify_2dw(address, buffer, &ignore_mask, verify_size, &mut compare) {
+                pass = true;
+                break;
+            } else {
                 self.otp_soak(OtpSoak::SoakProg);
                 if compare[0] != 0 {
                     self.otp_prog_dw(compare[0], ignore_mask[0], address)?;
@@ -641,9 +644,6 @@ impl<L: Logger> OtpController<L> {
                     pass = true;
                     break;
                 }
-            } else {
-                pass = true;
-                break;
             }
         }
         if !pass {
@@ -661,21 +661,21 @@ impl<L: Logger> OtpController<L> {
         let mut pass: bool = false;
 
         for _j in 0..OTP_OP_RETRIES {
-            if !self.verify_dw(addr, data, ignore, &mut compare) {
+            if self.verify_dw(addr, data, ignore, &mut compare) {
+                pass = true;
+                break;
+            } else {
                 self.otp_soak(OtpSoak::SoakProg);
                 if let Err(_e) = self.otp_prog_dw(compare, ignore, addr) {
                     pass = false;
                     break;
                 }
-                if !self.verify_dw(addr, data, ignore, &mut compare) {
-                    self.otp_soak(OtpSoak::NormalProg);
-                } else {
+                if self.verify_dw(addr, data, ignore, &mut compare) {
                     pass = true;
                     break;
+                } else {
+                    self.otp_soak(OtpSoak::NormalProg);
                 }
-            } else {
-                pass = true;
-                break;
             }
         }
         pass
@@ -694,7 +694,6 @@ impl<L: Logger> OtpController<L> {
         let mut addr: u32;
         let len: usize = buffer.len();
         let mut pass: bool;
-        let compare: u32 = 0;
 
         if address + len > OTP_MEM_LIMIT_DATA || address & 0x3 != 0 {
             return Err(OtpError::InvalidAddress);
@@ -702,7 +701,7 @@ impl<L: Logger> OtpController<L> {
         self.otp_unlock_reg();
 
         for i in 0..len {
-            addr = (address + i) as u32;
+            addr = u32::try_from(address + i).unwrap();
             self.otp_soak(OtpSoak::NormalProg);
             result = self.otp_prog_dw(buffer[i], ignore, addr);
             if result != Ok(()) {
@@ -876,8 +875,8 @@ impl<L: Logger> OtpController<L> {
             let idx = (i - offset) as usize;
             buffer[idx] = match self.otp_read_conf_idx(i) {
                 Ok(value) => value,
-                Err(_e) => {
-                    result = Err(_e);
+                Err(e) => {
+                    result = Err(e);
                     break;
                 }
             };
@@ -909,7 +908,7 @@ impl<L: Logger> OtpController<L> {
                 let idx = i - offset;
                 buf[idx] = 0;
                 for j in 0..32 {
-                    buf[idx] |= (strap_status[i * 32 + j].value as u32) << j;
+                    buf[idx] |= u32::from(strap_status[i * 32 + j].value) << j;
                 }
             }
         }
@@ -938,10 +937,10 @@ impl<L: Logger> OtpController<L> {
         if result == Ok(()) {
             for i in offset..offset + cdw_len {
                 let idx = i - offset;
-                buffer[idx] = match self.otp_read_conf_idx(28 + offset as u32) {
+                buffer[idx] = match self.otp_read_conf_idx(28 + u32::try_from(offset).unwrap()) {
                     Ok(value) => value,
-                    Err(_e) => {
-                        result = Err(_e);
+                    Err(e) => {
+                        result = Err(e);
                         break;
                     }
                 };
@@ -973,7 +972,10 @@ impl<L: Logger> OtpController<L> {
             let idx0 = i - offset;
             let idx1 = i;
             unsafe {
-                result = self.otp_read_data(idx1 as u32, &mut DATA_REGION[idx1..idx1 + 2]);
+                result = self.otp_read_data(
+                    u32::try_from(idx1).unwrap(),
+                    &mut DATA_REGION[idx1..idx1 + 2],
+                );
                 if result != Ok(()) {
                     otp_debug!(
                         self.logger,
@@ -984,7 +986,7 @@ impl<L: Logger> OtpController<L> {
                 }
                 otp_debug!(self.logger, "otp_prog_data: idx0={:}, idx1={:}", idx0, idx1);
                 result = self.otp_prog_verify_2dw(
-                    i as u32,
+                    u32::try_from(i).unwrap(),
                     &DATA_REGION[idx1..idx1 + 2],
                     &data[idx0..idx0 + 2],
                     &ignore,
@@ -1029,22 +1031,22 @@ impl<L: Logger> OtpController<L> {
         for i in start_bit..64 {
             prog_address = OTP_CONF_OFFSET;
             if i < 32 {
-                offset = i as u32;
-                bit = (strap[0] >> (offset - start_bit as u32)) & 0x1;
-                prog_address |= ((os[i].writable_option as u32 * 2 + 16) / 8) * 0x200;
-                prog_address |= ((os[i].writable_option as u32 * 2 + 16) % 8) * 0x2;
+                offset = u32::try_from(i).unwrap();
+                bit = (strap[0] >> (offset - u32::try_from(start_bit).unwrap())) & 0x1;
+                prog_address |= ((u32::from(os[i].writable_option) * 2 + 16) / 8) * 0x200;
+                prog_address |= ((u32::from(os[i].writable_option) * 2 + 16) % 8) * 0x2;
             } else {
-                offset = (i - 32) as u32;
+                offset = u32::try_from(i - 32).unwrap();
                 if i - start_bit < 32 {
                     bit = (strap[0] >> offset) & 0x1;
                 } else {
-                    bit = (strap[1] >> (offset - start_bit as u32)) & 0x1;
+                    bit = (strap[1] >> (offset - u32::try_from(start_bit).unwrap())) & 0x1;
                 }
-                prog_address |= ((os[i].writable_option as u32 * 2 + 17) / 8) * 0x200;
-                prog_address |= ((os[i].writable_option as u32 * 2 + 17) % 8) * 0x2;
+                prog_address |= ((u32::from(os[i].writable_option) * 2 + 17) / 8) * 0x200;
+                prog_address |= ((u32::from(os[i].writable_option) * 2 + 17) % 8) * 0x2;
             }
             //check if program bit value is the same as the programmed bit value
-            if bit == os[i].value as u32 {
+            if bit == u32::from(os[i].value) {
                 prog_flag = 0; //no need to proram
                 otp_debug!(self.logger, "otp_prog_strap: bit {:} no need to program", i);
             } else {
@@ -1053,7 +1055,7 @@ impl<L: Logger> OtpController<L> {
                     self.logger,
                     "otp_prog_strap: program bit {:} from {:} to {:}",
                     i,
-                    os[i].value as u32,
+                    u32::from(os[i].value),
                     bit
                 );
             }
@@ -1069,8 +1071,8 @@ impl<L: Logger> OtpController<L> {
             if prog_flag == 1 {
                 match self.otp_prog_dc_b(1, prog_address, offset) {
                     Ok(()) => {}
-                    Err(_e) => {
-                        return Err(_e);
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
             }
@@ -1104,10 +1106,10 @@ impl<L: Logger> OtpController<L> {
             //from 0
             let idx = i - start_conf;
             //read conf from OTP
-            otp_conf = match self.otp_read_conf_idx(i as u32) {
+            otp_conf = match self.otp_read_conf_idx(u32::try_from(i).unwrap()) {
                 Ok(value) => value,
-                Err(_e) => {
-                    result = Err(_e);
+                Err(e) => {
+                    result = Err(e);
                     break;
                 }
             };
@@ -1122,11 +1124,11 @@ impl<L: Logger> OtpController<L> {
                 continue;
             }
             self.otp_soak(OtpSoak::NormalProg);
-            result = self.otp_prog_dw(conf[idx], conf_ignore, addr as u32);
+            result = self.otp_prog_dw(conf[idx], conf_ignore, u32::try_from(addr).unwrap());
             if result != Ok(()) {
                 break;
             }
-            pass = self.otp_prog_verify_retry(addr as u32, conf[idx], conf_ignore);
+            pass = self.otp_prog_verify_retry(u32::try_from(addr).unwrap(), conf[idx], conf_ignore);
 
             if !pass {
                 break;
@@ -1172,9 +1174,9 @@ impl<L: Logger> OtpController<L> {
                 continue;
             }
             self.otp_soak(OtpSoak::Default);
-            self.otp_prog_dw(otp_scu[idx], ignore, addr as u32)?;
+            self.otp_prog_dw(otp_scu[idx], ignore, u32::try_from(addr).unwrap())?;
 
-            pass = self.otp_prog_verify_retry(addr as u32, otp_scu[idx], ignore);
+            pass = self.otp_prog_verify_retry(u32::try_from(addr).unwrap(), otp_scu[idx], ignore);
 
             if !pass {
                 break;
@@ -1199,15 +1201,16 @@ impl<L: Logger> OtpController<L> {
     pub fn region_capacity(&self, region: AspeedOtpRegion) -> usize {
         REGION_INFO[region as usize].cdw_size << 2
     }
+    #[allow(clippy::unused_self)]
     fn region_alignment(&self, region: AspeedOtpRegion) -> usize {
         REGION_INFO[region as usize].alignment
     }
-
+    #[allow(clippy::match_same_arms)]
     fn is_region_protected(&self, region: AspeedOtpRegion) -> Result<bool, OtpError> {
         let mut protected: bool = false;
 
         self.otp_unlock_reg();
-        let otp_conf: u32 = self.otp_read_conf_idx(0).unwrap_or_default();
+        let otp_conf: u32 = self.otp_read_conf_idx(0)?;
         self.otp_lock_reg();
         match region {
             AspeedOtpRegion::Data => {
@@ -1218,7 +1221,7 @@ impl<L: Logger> OtpController<L> {
                 }
             }
             AspeedOtpRegion::Configuration => {
-                if otp_conf & OTP_STRAP_PROT_ENBLE == OTP_STRAP_PROT_ENBLE {
+                if otp_conf & OTP_CONF_PROT_ENBLE == OTP_CONF_PROT_ENBLE {
                     protected = true;
                 }
             }
@@ -1227,11 +1230,7 @@ impl<L: Logger> OtpController<L> {
                     protected = true;
                 }
             }
-            AspeedOtpRegion::ScuProtection => {
-                if otp_conf & OTP_STRAP_PROT_ENBLE == OTP_STRAP_PROT_ENBLE {
-                    protected = true;
-                }
-            }
+            AspeedOtpRegion::ScuProtection => {}
         }
         Ok(protected)
     }
@@ -1255,28 +1254,27 @@ impl<L: Logger> OtpController<L> {
                 value[0] = OTP_USER_ECC_PROT_ENBLE | OTP_SECURE_PROT_ENBLE;
             }
             AspeedOtpRegion::Configuration => {
-                value[0] = OTP_STRAP_PROT_ENBLE;
+                value[0] = OTP_CONF_PROT_ENBLE;
             }
             AspeedOtpRegion::Strap => {
                 value[0] = OTP_STRAP_PROT_ENBLE;
             }
-            AspeedOtpRegion::ScuProtection => {
-                value[0] = OTP_STRAP_PROT_ENBLE;
-            }
+            AspeedOtpRegion::ScuProtection => {}
         }
         self.otp_prog_conf(0, &value)
     }
-    fn is_feature_supported(&self, feature: &str) -> Result<bool, OtpError> {
+    fn is_feature_supported(&self, _feature: &str) -> Result<bool, OtpError> {
         Ok(false)
     }
     fn list_regions(&self) -> Result<&[AspeedOtpRegion], OtpError> {
         Ok(REGION_IDS)
     }
     fn get_region_info(&self, region: AspeedOtpRegion) -> Result<(usize, usize, usize), OtpError> {
-        Ok((
-            REGION_INFO[region as usize].start,
-            REGION_INFO[region as usize].cdw_size,
-            REGION_INFO[region as usize].alignment,
-        ))
+        for each in REGION_INFO {
+            if each.region_type == region {
+                return Ok((each.start, each.cdw_size, each.alignment));
+            }
+        }
+        Err(OtpError::Unknown)
     }
 }
