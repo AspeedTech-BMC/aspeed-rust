@@ -1,3 +1,5 @@
+// Licensed under the Apache-2.0 license
+
 use crate::{
     common::{DummyDelay, Logger},
     otp::common::{AspeedChipVersion, AspeedOtpRegion, OtpError, SessionInfo, StrapStatus},
@@ -630,21 +632,19 @@ impl<L: Logger> OtpController<L> {
             if self.verify_2dw(address, buffer, &ignore_mask, verify_size, &mut compare) {
                 pass = true;
                 break;
-            } else {
-                self.otp_soak(OtpSoak::SoakProg);
-                if compare[0] != 0 {
-                    self.otp_prog_dw(compare[0], ignore_mask[0], address)?;
-                }
-                if verify_size == 2 && compare[1] != !0 {
-                    self.otp_prog_dw(compare[1], ignore_mask[1], address + 1)?;
-                }
-                if !self.verify_2dw(address, buffer, &ignore_mask, verify_size, &mut compare) {
-                    self.otp_soak(OtpSoak::NormalProg);
-                } else {
-                    pass = true;
-                    break;
-                }
             }
+            self.otp_soak(OtpSoak::SoakProg);
+            if compare[0] != 0 {
+                self.otp_prog_dw(compare[0], ignore_mask[0], address)?;
+            }
+            if verify_size == 2 && compare[1] != !0 {
+                self.otp_prog_dw(compare[1], ignore_mask[1], address + 1)?;
+            }
+            if self.verify_2dw(address, buffer, &ignore_mask, verify_size, &mut compare) {
+                pass = true;
+                break;
+            }
+            self.otp_soak(OtpSoak::NormalProg);
         }
         if !pass {
             self.otp_soak(OtpSoak::Default);
@@ -664,19 +664,17 @@ impl<L: Logger> OtpController<L> {
             if self.verify_dw(addr, data, ignore, &mut compare) {
                 pass = true;
                 break;
-            } else {
-                self.otp_soak(OtpSoak::SoakProg);
-                if let Err(_e) = self.otp_prog_dw(compare, ignore, addr) {
-                    pass = false;
-                    break;
-                }
-                if self.verify_dw(addr, data, ignore, &mut compare) {
-                    pass = true;
-                    break;
-                } else {
-                    self.otp_soak(OtpSoak::NormalProg);
-                }
             }
+            self.otp_soak(OtpSoak::SoakProg);
+            if let Err(_e) = self.otp_prog_dw(compare, ignore, addr) {
+                pass = false;
+                break;
+            }
+            if self.verify_dw(addr, data, ignore, &mut compare) {
+                pass = true;
+                break;
+            }
+            self.otp_soak(OtpSoak::NormalProg);
         }
         pass
     }
@@ -684,6 +682,7 @@ impl<L: Logger> OtpController<L> {
     /// Program OTP data region
     /// starts from "address" with "buffer" contents
     ///
+    #[allow(clippy::needless_range_loop)]
     pub fn aspeed_otp_prog_data(
         &mut self,
         address: usize,
@@ -774,6 +773,7 @@ impl<L: Logger> OtpController<L> {
 
         key_num
     }
+    #[allow(clippy::needless_range_loop)]
     pub fn otp_strap_status(&self, os: &mut [StrapStatus]) -> Result<(), OtpError> {
         let mut otpstrap_raw: [u32; 2] = [0; 2];
 
@@ -788,7 +788,7 @@ impl<L: Logger> OtpController<L> {
         self.otp_soak(OtpSoak::Default);
 
         for i in (16..strap_end).step_by(2) {
-            let option = ((i - 16) / 2) as u8;
+            let option = u8::try_from((i - 16) / 2).unwrap();
 
             otpstrap_raw[0] = self.otp_read_conf_idx(i.try_into().unwrap())?;
             otpstrap_raw[1] = self.otp_read_conf_idx((i + 1).try_into().unwrap())?;
@@ -849,7 +849,7 @@ impl<L: Logger> OtpController<L> {
         }
         for i in (offset..offset + cdw_len).step_by(2) {
             let idx = i - offset;
-            match self.otp_read_data(i as u32, &mut temp) {
+            match self.otp_read_data(u32::try_from(i).unwrap(), &mut temp) {
                 Ok(()) => {
                     buffer[idx] = temp[0];
                     buffer[idx + 1] = temp[1];
@@ -865,7 +865,7 @@ impl<L: Logger> OtpController<L> {
     ///
     fn aspeed_otp_read_conf(&self, offset: u32, buffer: &mut [u32]) -> Result<(), OtpError> {
         let mut result: Result<(), OtpError> = Ok(());
-        let cdw_len = buffer.len() as u32;
+        let cdw_len = u32::try_from(buffer.len()).unwrap();
         if cdw_len + offset > 32 {
             return Err(OtpError::BoundaryError);
         }
@@ -888,6 +888,7 @@ impl<L: Logger> OtpController<L> {
     ///Read OTP strap into buffer.
     ///buf: output OTP strap into buffer.
     ///
+    #[allow(dead_code)]
     fn aspeed_otp_read_strap(&self, offset: usize, buf: &mut [u32]) -> Result<(), OtpError> {
         let mut strap_status: [StrapStatus; 64] = [StrapStatus {
             value: false,
@@ -1006,6 +1007,7 @@ impl<L: Logger> OtpController<L> {
     /// Program strap bits
     /// All non proteced bits will be programmed
     ///
+    #[allow(clippy::needless_range_loop)]
     pub fn otp_prog_strap(&mut self, start_bit: usize, strap: &[u32]) -> Result<(), OtpError> {
         let mut prog_address: u32;
         let mut bit: u32;
@@ -1145,6 +1147,7 @@ impl<L: Logger> OtpController<L> {
     ///
     /// SCU protect
     ///
+    #[allow(clippy::needless_range_loop)]
     pub fn otp_prog_scu_protect(&mut self, start: usize, otp_scu: &[u32]) -> Result<(), OtpError> {
         let mut scu_pro: [u32; 2] = [0; 2];
         let ignore: u32 = 0;
@@ -1263,12 +1266,17 @@ impl<L: Logger> OtpController<L> {
         }
         self.otp_prog_conf(0, &value)
     }
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::unnecessary_wraps)]
     fn is_feature_supported(&self, _feature: &str) -> Result<bool, OtpError> {
         Ok(false)
     }
+    #[allow(clippy::unused_self)]
+    #[allow(clippy::unnecessary_wraps)]
     fn list_regions(&self) -> Result<&[AspeedOtpRegion], OtpError> {
         Ok(REGION_IDS)
     }
+    #[allow(clippy::unused_self)]
     fn get_region_info(&self, region: AspeedOtpRegion) -> Result<(usize, usize, usize), OtpError> {
         for each in REGION_INFO {
             if each.region_type == region {

@@ -23,22 +23,22 @@ fn test_otp_read_conf<L: Logger>(
     let mut data: [u32; 32] = [0; 32];
     match otp.read_region(AspeedOtpRegion::Configuration, 0, &mut data) {
         Ok(()) => {
-            for i in 0..data.len() {
+            for (i, each) in data.iter().enumerate() {
                 writeln!(
                     uart,
                     "read OTPCFG{:#x} ok: {:#x}\r",
                     conf_reg + u32::try_from(i).unwrap(),
-                    data[i]
+                    each
                 )
                 .unwrap();
             }
         }
         Err(e) => {
-            writeln!(uart, "read OTPCFG{:#x} err: {e:?}\r", conf_reg).unwrap();
+            writeln!(uart, "read OTPCFG{conf_reg:#x} err: {e:?}\r").unwrap();
         }
     }
 }
-
+#[allow(clippy::too_many_lines)]
 fn test_otp_write_conf_b<L: Logger>(
     uart: &mut UartController<'_>,
     otp: &mut OtpController<L>,
@@ -91,14 +91,13 @@ fn test_otp_write_conf_b<L: Logger>(
             writeln!(uart, "OTPCFG4 is protected!\r").unwrap();
             return;
         }
-        if (otp_bit_offset <= 7) || (otp_bit_offset >= 16 && otp_bit_offset <= 23) {
+        if (otp_bit_offset <= 7) || (16..=23).contains(&otp_bit_offset) {
             let key_num = otp.get_key_count();
-            let retire: u32;
-            if otp_bit_offset >= 16 {
-                retire = otp_bit_offset - 16;
+            let retire: u32 = if otp_bit_offset >= 16 {
+                otp_bit_offset - 16
             } else {
-                retire = otp_bit_offset;
-            }
+                otp_bit_offset
+            };
             if retire >= u32::from(key_num) {
                 writeln!(
                     uart,
@@ -108,7 +107,7 @@ fn test_otp_write_conf_b<L: Logger>(
                 return;
             }
         }
-    } else if otp_addr >= 16 && otp_addr <= 31 {
+    } else if (16..=31).contains(&otp_addr) {
         if conf0 & OTP_STRAP_PROT_ENBLE != 0 {
             writeln!(uart, "OTP strap region is protected!\r").unwrap();
             return;
@@ -123,8 +122,7 @@ fn test_otp_write_conf_b<L: Logger>(
             if otp_strap_pro >> otp_bit_offset & 1 != 0 {
                 writeln!(
                     uart,
-                    "OTPCFG{:#x}[{:#x}] is protected!\r",
-                    otp_addr, otp_bit_offset
+                    "OTPCFG{otp_addr:#x}[{otp_bit_offset:#x}] is protected!\r",
                 )
                 .unwrap();
             }
@@ -135,8 +133,7 @@ fn test_otp_write_conf_b<L: Logger>(
     if (conf >> otp_bit_offset & 0x1) == otp_value {
         writeln!(
             uart,
-            "OTPCFG{:#x}[{:#x}] = 1; no need to program\r",
-            otp_addr, otp_bit_offset
+            "OTPCFG{otp_addr:#x}[{otp_bit_offset:#x}] = 1; no need to program\r",
         )
         .unwrap();
         return;
@@ -144,8 +141,7 @@ fn test_otp_write_conf_b<L: Logger>(
     if (conf >> otp_bit_offset & 0x1) == 1 && otp_value == 0 {
         writeln!(
             uart,
-            "OTPCFG{:#x}[{:#x}] = 1; cannot be cleared\r",
-            otp_addr, otp_bit_offset
+            "OTPCFG{otp_addr:#x}[{otp_bit_offset:#x}] = 1; cannot be cleared\r",
         )
         .unwrap();
         return;
@@ -157,13 +153,12 @@ fn test_otp_write_conf_b<L: Logger>(
         Ok(()) => {
             writeln!(
                 uart,
-                "program OTPCFG{:#x}[{:#x}] successfully!\r",
-                otp_addr, otp_bit_offset
+                "program OTPCFG{otp_addr:#x}[{otp_bit_offset:#x}] successfully!\r",
             )
             .unwrap();
         }
         Err(e) => {
-            writeln!(uart, "program OTPCFG{:#x} err: {e:?}\r", otp_addr).unwrap();
+            writeln!(uart, "program OTPCFG{otp_addr:#x} err: {e:?}\r").unwrap();
         }
     }
 }
@@ -173,14 +168,14 @@ fn test_otp_write_conf_d<L: Logger>(
     otp: &mut OtpController<L>,
     offset: u8,
 ) {
-    let mut data: [u32; 2] = [0xabcd_beef, 0x1234_5678];
+    let data: [u32; 2] = [0xabcd_beef, 0x1234_5678];
 
-    match otp.write_region(AspeedOtpRegion::Configuration, offset as usize, &mut data) {
+    match otp.write_region(AspeedOtpRegion::Configuration, offset as usize, &data) {
         Ok(()) => {
-            writeln!(uart, "write OTPCONF{:#x} success\r", offset).unwrap();
+            writeln!(uart, "write OTPCONF{offset:#x} success\r").unwrap();
         }
         Err(e) => {
-            writeln!(uart, "write OTPCONF{:#x} err: {e:?}\r", offset).unwrap();
+            writeln!(uart, "write OTPCONF{offset:#x} err: {e:?}\r").unwrap();
         }
     }
 }
@@ -209,7 +204,7 @@ fn read_otp_data<L: Logger>(
     data: &mut [u32],
 ) {
     if let Err(e) = otp.read_region(AspeedOtpRegion::Data, 0, data) {
-        writeln!(uart, "read OTPDATA{:#x} err: {e:?}\r", offset).unwrap();
+        writeln!(uart, "read OTPDATA{offset:#x} err: {e:?}\r").unwrap();
     }
 }
 
@@ -249,7 +244,7 @@ fn test_otp_write_strap_b<L: Logger>(
         return;
     }
     //test_otp_read_strap(uart, otp, u32::from(bit_offset), 1);
-    if value == strap_status[bit_offset as usize].value as u8 {
+    if value == u8::from(strap_status[bit_offset as usize].value) {
         writeln!(uart, "The value is same as before.\r").unwrap();
         return;
     }
@@ -266,8 +261,8 @@ fn test_otp_write_strap_b<L: Logger>(
         "Write 1 to OTPSTRAP[{:#x}] OPTION[{:#x}], that value changes from {:#x} to {:#x} \r",
         bit_offset,
         strap_status[bit_offset as usize].writable_option + 1,
-        strap_status[bit_offset as usize].value as u8,
-        strap_status[bit_offset as usize].value as u8 ^ 1
+        u8::from(strap_status[bit_offset as usize].value),
+        u8::from(strap_status[bit_offset as usize].value) ^ 1
     )
     .unwrap();
 
@@ -288,7 +283,7 @@ fn test_otp_write_strap_b<L: Logger>(
     }
     match otp.otp_prog_dc_b(1, prog_addr, offset) {
         Ok(()) => {
-            writeln!(uart, "program OTPSTRAP[{:#x}] successfully!\r", offset).unwrap();
+            writeln!(uart, "program OTPSTRAP[{offset:#x}] successfully!\r").unwrap();
         }
         Err(e) => {
             writeln!(uart, "program OTPSTRAP err: {e:?}\r").unwrap();
@@ -302,13 +297,8 @@ fn test_otp_write_strap_d<L: Logger>(
     start_bit: usize,
     strap: &[u32],
 ) {
-    writeln!(
-        uart,
-        "OTPSTRAP start_bit {:}, strap = {:?}\r",
-        start_bit, strap
-    )
-    .unwrap();
-    match otp.write_region(AspeedOtpRegion::Strap, start_bit, &strap) {
+    writeln!(uart, "OTPSTRAP start_bit {start_bit:}, strap = {strap:?}\r",).unwrap();
+    match otp.write_region(AspeedOtpRegion::Strap, start_bit, strap) {
         Ok(()) => {
             writeln!(uart, "program OTPSTRAP dword success\r").unwrap();
         }
@@ -340,7 +330,8 @@ fn test_otp_read_strap<L: Logger>(
             write!(
                 uart,
                 "0x{:<8x} {:<7} ",
-                i, strap_status[i as usize].value as u8
+                i,
+                u8::from(strap_status[i as usize].value)
             )
             .unwrap();
             for j in 0..remains {
@@ -371,7 +362,7 @@ fn test_otp_read_strap<L: Logger>(
     let mut buffer: [u32; 2] = [0, 0];
     match otp.read_region(AspeedOtpRegion::Strap, 0, &mut buffer) {
         Ok(()) => {
-            writeln!(uart, "read OTPSTRAP {:?}\r", buffer).unwrap();
+            writeln!(uart, "read OTPSTRAP {buffer:?}\r").unwrap();
         }
         Err(e) => {
             writeln!(uart, "read OTPSTRAP err: {e:?}\r").unwrap();
@@ -419,7 +410,7 @@ fn test_otp_write_data_b<L: Logger>(
         read_otp_data(uart, otp, otp_addr, &mut data);
         otp_bit = (data[0] >> bit_offset) & 0x1;
         if otp_bit == 1 && value == 0 {
-            writeln!(uart, "OTPDATA{:#x}[{:#x}] = 1\r", otp_addr, bit_offset).unwrap();
+            writeln!(uart, "OTPDATA{otp_addr:#x}[{bit_offset:#x}] = 1\r").unwrap();
             writeln!(uart, "OTP is programmed, which can't be cleared!\r").unwrap();
             return;
         }
@@ -427,27 +418,21 @@ fn test_otp_write_data_b<L: Logger>(
         read_otp_data(uart, otp, otp_addr - 1, &mut data);
         otp_bit = (data[1] >> bit_offset) & 0x1;
         if otp_bit == 0 && value == 1 {
-            writeln!(uart, "OTPDATA{:#x}[{:#x}] = 1\r", otp_addr, bit_offset).unwrap();
+            writeln!(uart, "OTPDATA{otp_addr:#x}[{bit_offset:#x}] = 1\r").unwrap();
             writeln!(uart, "OTP is programmed, which can't be written!\r").unwrap();
             return;
         }
     }
 
     if otp_bit == value {
-        writeln!(
-            uart,
-            "OTPDATA{:#x}[{:#x}] = {}\r",
-            otp_addr, bit_offset, value
-        )
-        .unwrap();
+        writeln!(uart, "OTPDATA{otp_addr:#x}[{bit_offset:#x}] = {value}\r",).unwrap();
         writeln!(uart, "No need to program!\r").unwrap();
         return;
     }
 
     writeln!(
         uart,
-        "Program OTPDATA{:#x}[{:#x}] to {}\r",
-        otp_addr, bit_offset, value
+        "Program OTPDATA{otp_addr:#x}[{bit_offset:#x}] to {value}\r",
     )
     .unwrap();
 
@@ -455,16 +440,14 @@ fn test_otp_write_data_b<L: Logger>(
         Ok(()) => {
             writeln!(
                 uart,
-                "program OTPDATA{:#x}[{:#x}] successfully!\r",
-                otp_addr, bit_offset
+                "program OTPDATA{otp_addr:#x}[{bit_offset:#x}] successfully!\r",
             )
             .unwrap();
         }
         Err(e) => {
             writeln!(
                 uart,
-                "program OTPDATA{:#x}[{:#x}] err: {e:?}\r",
-                otp_addr, bit_offset
+                "program OTPDATA{otp_addr:#x}[{bit_offset:#x}] err: {e:?}\r",
             )
             .unwrap();
         }
@@ -479,10 +462,10 @@ fn test_otp_write_data_d<L: Logger>(
 ) {
     match otp.write_region(AspeedOtpRegion::Data, otp_addr as usize, data) {
         Ok(()) => {
-            writeln!(uart, "write OTPDATA{:#x} success\r", otp_addr).unwrap();
+            writeln!(uart, "write OTPDATA{otp_addr:#x} success\r").unwrap();
         }
         Err(e) => {
-            writeln!(uart, "write OTPDATA{:#x} err: {e:?}\r", otp_addr).unwrap();
+            writeln!(uart, "write OTPDATA{otp_addr:#x} err: {e:?}\r").unwrap();
         }
     }
 }
@@ -497,18 +480,18 @@ fn test_otp_read_data<L: Logger>(
     let mut data: [u32; 32] = [0; 32];
     match otp.read_region(AspeedOtpRegion::Data, 0, &mut data) {
         Ok(()) => {
-            for i in 0..data.len() {
+            for (i, each) in data.iter().enumerate() {
                 writeln!(
                     uart,
                     "read OTPDATA{:#x} ok: {:#x}\r",
                     conf_reg + u32::try_from(i).unwrap(),
-                    data[i as usize]
+                    each
                 )
                 .unwrap();
             }
         }
         Err(e) => {
-            writeln!(uart, "read OTPDATA{:#x} err: {e:?}\r", conf_reg).unwrap();
+            writeln!(uart, "read OTPDATA{conf_reg:#x} err: {e:?}\r").unwrap();
         }
     }
 }

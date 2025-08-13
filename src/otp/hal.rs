@@ -1,3 +1,5 @@
+// Licensed under the Apache-2.0 license
+
 use crate::{
     common::Logger,
     otp::{
@@ -125,6 +127,7 @@ impl<L: Logger> OtpRegions<u32> for OtpController<L> {
     /// # Returns
     /// - `Ok(())`: Data read successfully
     /// - `Err(Self::Error)`: Read operation failed
+    #[allow(clippy::needless_range_loop)]
     fn read_region(
         &self,
         region: Self::Region,

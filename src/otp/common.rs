@@ -1,3 +1,5 @@
+// Licensed under the Apache-2.0 license
+
 use proposed_traits::otp::ErrorKind;
 /// ASPEED chip version information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,7 @@ impl proposed_traits::otp::Error for OtpError {
 }
 
 /// Protection status for different OTP regions
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProtectionStatus {
     /// Memory lock status (prevents all modifications)
