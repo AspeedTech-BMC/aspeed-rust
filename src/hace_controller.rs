@@ -3,11 +3,53 @@
 use ast1060_pac::Hace;
 use core::any::TypeId;
 use core::convert::Infallible;
+use core::ptr::write_volatile;
 use proposed_traits::digest::ErrorType as DigestErrorType;
 use proposed_traits::mac::ErrorType as MacErrorType;
 use proposed_traits::symm_cipher::BlockCipherMode;
 use proposed_traits::symm_cipher::CipherMode;
 use proposed_traits::symm_cipher::ErrorType as SymmCipherErrorType;
+
+fn dsync_fence_full() {
+    cortex_m::asm::dsb();
+    cortex_m::asm::isb();
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+fn write_reg(addr: u32, val: u32) {
+    unsafe { write_volatile(addr as *mut u32, val) }
+}
+
+pub fn cache_data_invd_all() {
+    const CACHE_AREA_OFFSET: u32 = 0x7E6E_2A50;
+    const CACHE_INVAL_OFFSET: u32 = 0x7E6E_2A54;
+    const CACHE_CTRL_OFFSET: u32 = 0x7E6E_2A58;
+
+    const CACHE_AREA_VAL: u32 = 0x000F_FFFF;
+    const CACHE_INVAL_VAL: u32 = 0x8660_0000;
+
+    cortex_m::interrupt::free(|_| {
+        write_reg(CACHE_CTRL_OFFSET, 0);
+        dsync_fence_full();
+
+        write_reg(CACHE_AREA_OFFSET, CACHE_AREA_VAL);
+        write_reg(CACHE_INVAL_OFFSET, CACHE_INVAL_VAL);
+        dsync_fence_full();
+
+        write_reg(CACHE_CTRL_OFFSET, 1);
+        dsync_fence_full();
+    });
+
+    write_reg(CACHE_CTRL_OFFSET, 0);
+    dsync_fence_full();
+
+    write_reg(CACHE_AREA_OFFSET, CACHE_AREA_VAL);
+    write_reg(CACHE_INVAL_OFFSET, CACHE_INVAL_VAL);
+    dsync_fence_full();
+
+    write_reg(CACHE_CTRL_OFFSET, 1);
+    dsync_fence_full();
+}
 
 const SHA1_IV: [u32; 8] = [
     0x0123_4567,
@@ -139,10 +181,10 @@ pub const ASPEED_HACE_DATA_LEN: u32 = 0x0C;
 pub const ASPEED_HACE_CMD: u32 = 0x10;
 
 // HACE_CMD bit definitions
-pub const HACE_CMD_AES_KEY_FROM_OTP: u32 = 1 << 24; // G6
-pub const HACE_CMD_MBUS_REQ_SYNC_EN: u32 = 1 << 20; // G6
-pub const HACE_CMD_DES_SG_CTRL: u32 = 1 << 19; // G6
-pub const HACE_CMD_SRC_SG_CTRL: u32 = 1 << 18; // G6
+pub const HACE_CMD_AES_KEY_FROM_OTP: u32 = 1 << 24;
+pub const HACE_CMD_MBUS_REQ_SYNC_EN: u32 = 1 << 20;
+pub const HACE_CMD_DES_SG_CTRL: u32 = 1 << 19;
+pub const HACE_CMD_SRC_SG_CTRL: u32 = 1 << 18;
 
 pub const HACE_CMD_SINGLE_DES: u32 = 0;
 pub const HACE_CMD_TRIPLE_DES: u32 = 1 << 17;
@@ -150,15 +192,16 @@ pub const HACE_CMD_TRIPLE_DES: u32 = 1 << 17;
 pub const HACE_CMD_AES_SELECT: u32 = 0;
 pub const HACE_CMD_DES_SELECT: u32 = 1 << 16;
 
-pub const HACE_CMD_CTR_IV_AES_128: u32 = 0; // G6
+pub const HACE_CMD_CTR_IV_AES_128: u32 = 0;
 
-pub const HACE_CMD_AES_KEY_HW_EXP: u32 = 1 << 13; // G6
+pub const HACE_CMD_AES_KEY_HW_EXP: u32 = 1 << 13;
 pub const HACE_CMD_ISR_EN: u32 = 1 << 12;
 
 pub const HACE_CMD_DECRYPT: u32 = 0;
 pub const HACE_CMD_ENCRYPT: u32 = 1 << 7;
 
 // AES Modes
+pub const HACE_CMD_MODE_MASK: u32 = 0x7 << 4;
 pub const HACE_CMD_ECB: u32 = 0;
 pub const HACE_CMD_CBC: u32 = 0x1 << 4;
 pub const HACE_CMD_CFB: u32 = 0x2 << 4;
@@ -171,14 +214,14 @@ pub const HACE_CMD_AES192: u32 = 0x1 << 2;
 pub const HACE_CMD_AES256: u32 = 0x2 << 2;
 
 #[derive(Debug, Clone, Copy)]
-pub struct Cbc;
-impl CipherMode for Cbc {}
-impl BlockCipherMode for Cbc {}
-
-#[derive(Debug, Clone, Copy)]
 pub struct Ecb;
 impl CipherMode for Ecb {}
 impl BlockCipherMode for Ecb {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Cbc;
+impl CipherMode for Cbc {}
+impl BlockCipherMode for Cbc {}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cfb;
@@ -231,6 +274,11 @@ impl AspeedSg {
     #[must_use]
     pub const fn new() -> Self {
         Self { len: 0, addr: 0 }
+    }
+
+    #[must_use]
+    pub fn phys_addr(&self) -> u32 {
+        core::ptr::from_ref::<Self>(self) as u32
     }
 }
 
@@ -479,6 +527,8 @@ impl MacErrorType for HaceController<'_> {
 #[derive(Debug)]
 pub enum HaceCipherError {
     InvalidKeyLength,
+    InvalidIvLength,
+    InvalidDataLength,
     HardwareFailure,
     Busy,
     UnsupportedMode,
@@ -609,10 +659,10 @@ impl HaceController<'_> {
     }
 
     fn crypto_mode_to_cmd<M: CipherMode + 'static>() -> Result<u32, HaceCipherError> {
-        if TypeId::of::<M>() == TypeId::of::<Cbc>() {
-            Ok(HACE_CMD_CBC)
-        } else if TypeId::of::<M>() == TypeId::of::<Ecb>() {
+        if TypeId::of::<M>() == TypeId::of::<Ecb>() {
             Ok(HACE_CMD_ECB)
+        } else if TypeId::of::<M>() == TypeId::of::<Cbc>() {
+            Ok(HACE_CMD_CBC)
         } else if TypeId::of::<M>() == TypeId::of::<Cfb>() {
             Ok(HACE_CMD_CFB)
         } else if TypeId::of::<M>() == TypeId::of::<Ofb>() {
@@ -625,7 +675,7 @@ impl HaceController<'_> {
     }
 
     pub fn assemble_cmd_from_key_mode<M, K>(
-        _key: &K,
+        key: &K,
     ) -> Result<(u32, bool, usize, usize), HaceCipherError>
     where
         M: CipherMode + 'static,
@@ -639,7 +689,7 @@ impl HaceController<'_> {
             CryptoAlgo::Aes => {
                 cmd |= HACE_CMD_AES_SELECT | HACE_CMD_AES_KEY_HW_EXP;
 
-                let kl = _key.key_len();
+                let kl = key.key_len();
                 match kl {
                     16 => cmd |= HACE_CMD_AES128,
                     24 => cmd |= HACE_CMD_AES192,
@@ -649,14 +699,14 @@ impl HaceController<'_> {
                 (true, 16usize, kl)
             }
             CryptoAlgo::Des => {
-                if _key.key_len() != 8 {
+                if key.key_len() != 8 {
                     return Err(HaceCipherError::InvalidKeyLength);
                 }
                 cmd |= HACE_CMD_DES_SELECT;
                 (false, 8usize, 8usize)
             }
             CryptoAlgo::Tdes => {
-                if _key.key_len() != 24 {
+                if key.key_len() != 24 {
                     return Err(HaceCipherError::InvalidKeyLength);
                 }
                 cmd |= HACE_CMD_DES_SELECT | HACE_CMD_TRIPLE_DES;
@@ -671,8 +721,11 @@ impl HaceController<'_> {
         let (src_sg_ptr, dst_sg_ptr, ctx_ptr, cmd) = {
             let hw = self.crypto_ctx_mut();
 
-            let src = (&hw.src_sg as *const AspeedSg) as u32;
-            let dst = (&hw.dst_sg as *const AspeedSg) as u32;
+            hw.src_sg.len = data_len | HACE_SG_LAST;
+            hw.dst_sg.len = data_len | HACE_SG_LAST;
+
+            let src = hw.src_sg.phys_addr();
+            let dst = hw.dst_sg.phys_addr();
             let ctx = hw.ctx.as_ptr() as u32;
             let cmd = hw.cmd;
 
@@ -691,6 +744,51 @@ impl HaceController<'_> {
             while self.hace.hace1c().read().crypto_intflag().bit_is_clear() {
                 cortex_m::asm::nop();
             }
+        }
+
+        cache_data_invd_all();
+    }
+
+    #[must_use]
+    pub fn needs_iv(cmd: u32) -> bool {
+        (cmd & HACE_CMD_MODE_MASK) != HACE_CMD_ECB
+    }
+
+    #[must_use]
+    pub fn mode_block_size(is_aes: bool) -> usize {
+        if is_aes {
+            16
+        } else {
+            8
+        }
+    }
+
+    pub fn iv_slice_mut(ctx: &mut [u8; 64], is_aes: bool, n: usize) -> &mut [u8] {
+        if is_aes {
+            &mut ctx[0..n]
+        } else {
+            &mut ctx[8..8 + n]
+        }
+    }
+
+    #[must_use]
+    pub fn iv_slice(ctx: &[u8; 64], is_aes: bool, n: usize) -> &[u8] {
+        if is_aes {
+            &ctx[0..n]
+        } else {
+            &ctx[8..8 + n]
+        }
+    }
+    pub fn key_slice_mut(ctx: &mut [u8; 64], key_len: usize) -> &mut [u8] {
+        &mut ctx[16..16 + key_len]
+    }
+
+    #[must_use]
+    pub fn iv_out_offset(is_aes: bool) -> usize {
+        if is_aes {
+            0
+        } else {
+            8
         }
     }
 }

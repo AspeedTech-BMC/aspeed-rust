@@ -17,6 +17,7 @@ impl Error for HaceCipherError {
     fn kind(&self) -> ErrorKind {
         match self {
             Self::InvalidKeyLength => ErrorKind::KeyError,
+            Self::InvalidIvLength | Self::InvalidDataLength => ErrorKind::InvalidInput,
             Self::HardwareFailure => ErrorKind::HardwareFailure,
             Self::Busy => ErrorKind::InvalidState,
             Self::UnsupportedMode => ErrorKind::UnsupportedAlgorithm,
@@ -52,6 +53,12 @@ pub struct AesKey {
 
 impl CommonErrorType for AesKey {
     type Error = SerdeError;
+}
+
+impl HasCryptoAlgo for AesKey {
+    fn algo() -> CryptoAlgo {
+        CryptoAlgo::Aes
+    }
 }
 
 impl KeyMaterial for AesKey {
@@ -200,9 +207,22 @@ impl ToBytes for Iv {
     }
 }
 
+impl Iv {
+    pub const NONE: Self = Self {
+        data: [0u8; 16],
+        len: 0,
+    };
+
+    #[inline]
+    #[must_use]
+    pub const fn none() -> Self {
+        Self::NONE
+    }
+}
+
 #[derive(Clone)]
 pub struct PlainText {
-    pub data: [u8; 256],
+    pub data: [u8; 64],
     pub len: usize,
 }
 impl CommonErrorType for PlainText {
@@ -210,10 +230,10 @@ impl CommonErrorType for PlainText {
 }
 impl FromBytes for PlainText {
     fn from_bytes(bytes: &[u8], _endian: Endian) -> Result<Self, Self::Error> {
-        if bytes.len() > 256 {
+        if bytes.len() > 64 {
             return Err(SerdeError::BufferTooSmall);
         }
-        let mut data = [0u8; 256];
+        let mut data = [0u8; 64];
         data[..bytes.len()].copy_from_slice(bytes);
         Ok(Self {
             data,
@@ -233,7 +253,7 @@ impl ToBytes for PlainText {
 
 #[derive(Clone)]
 pub struct CipherText {
-    pub data: [u8; 272],
+    pub data: [u8; 80],
     pub len: usize,
 }
 impl CommonErrorType for CipherText {
@@ -241,10 +261,10 @@ impl CommonErrorType for CipherText {
 }
 impl FromBytes for CipherText {
     fn from_bytes(bytes: &[u8], _endian: Endian) -> Result<Self, Self::Error> {
-        if bytes.len() > 272 {
+        if bytes.len() > 80 {
             return Err(SerdeError::BufferTooSmall);
         }
-        let mut data = [0u8; 272];
+        let mut data = [0u8; 80];
         data[..bytes.len()].copy_from_slice(bytes);
         Ok(Self {
             data,
@@ -262,16 +282,19 @@ impl ToBytes for CipherText {
     }
 }
 
-pub struct HaceSymmetric<'ctrl, K> {
-    pub controller: &'ctrl mut HaceController<'ctrl>,
+pub struct HaceSymmetric<'ctrl, 'h, K>
+where
+    'h: 'ctrl,
+{
+    pub controller: &'ctrl mut HaceController<'h>,
     pub _key: core::marker::PhantomData<K>,
 }
 
-impl<K> ErrorType for HaceSymmetric<'_, K> {
+impl<K> ErrorType for HaceSymmetric<'_, '_, K> {
     type Error = HaceCipherError;
 }
 
-impl<K> SymmetricCipher for HaceSymmetric<'_, K>
+impl<K> SymmetricCipher for HaceSymmetric<'_, '_, K>
 where
     K: FromBytes + ToBytes,
 {
@@ -286,8 +309,8 @@ pub struct OpContextImpl<'a, 'ctrl, M: CipherMode, K> {
 
     cmd_base: u32,
     is_aes: bool,
-    iv_origin: Iv,
     iv_len: u8,
+    used: bool,
 
     _phantom: core::marker::PhantomData<(M, K)>,
 }
@@ -306,12 +329,13 @@ where
     type CipherText = CipherText;
 }
 
-impl<'ctrl, M: BlockCipherMode + 'static, K> CipherInit<M> for HaceSymmetric<'ctrl, K>
+impl<'ctrl, 'h, M: BlockCipherMode + 'static, K> CipherInit<M> for HaceSymmetric<'ctrl, 'h, K>
 where
+    'h: 'ctrl,
     M: CipherMode,
     K: KeyMaterial + FromBytes + ToBytes + HasCryptoAlgo,
 {
-    type CipherContext<'a> = OpContextImpl<'a, 'ctrl, M, K>
+    type CipherContext<'a> = OpContextImpl<'a, 'h, M, K>
     where
         Self: 'a;
 
@@ -323,23 +347,23 @@ where
     ) -> Result<Self::CipherContext<'a>, Self::Error> {
         let (cmd_base, is_aes, iv_len, key_len) =
             HaceController::assemble_cmd_from_key_mode::<M, K>(key)?;
-        self.controller.crypto_ctx_mut().cmd = cmd_base;
         let hw = self.controller.crypto_ctx_mut();
-        let n = core::cmp::min(nonce.len, iv_len);
-        if is_aes {
-            hw.ctx[0..n].copy_from_slice(&nonce.data[..n]);
-        } else {
-            hw.ctx[8..8 + n].copy_from_slice(&nonce.data[..n]);
+        hw.cmd = cmd_base;
+
+        if HaceController::needs_iv(hw.cmd) {
+            let n = core::cmp::min(nonce.len, iv_len);
+            HaceController::iv_slice_mut(&mut hw.ctx, is_aes, n).copy_from_slice(&nonce.data[..n]);
         }
-        let kb = key.as_bytes();
-        hw.ctx[16..16 + key_len].copy_from_slice(&kb[..key_len]);
+
+        HaceController::key_slice_mut(&mut hw.ctx, key_len)
+            .copy_from_slice(&key.as_bytes()[..key_len]);
 
         Ok(OpContextImpl {
             controller: self.controller,
             cmd_base,
             is_aes,
-            iv_origin: nonce.clone(),
-            iv_len: iv_len as u8,
+            iv_len: u8::try_from(iv_len).map_err(|_| HaceCipherError::InvalidIvLength)?,
+            used: false,
 
             _phantom: core::marker::PhantomData,
         })
@@ -352,52 +376,56 @@ where
     K: KeyMaterial + FromBytes + ToBytes + HasCryptoAlgo,
 {
     fn encrypt(&mut self, pt: Self::PlainText) -> Result<Self::CipherText, Self::Error> {
-        let hw = self.controller.crypto_ctx_mut();
-        if self.is_aes {
-            let n = core::cmp::min(self.iv_len as usize, 16);
-            hw.ctx[0..n].copy_from_slice(&self.iv_origin.data[..n]);
-        } else {
-            let n = core::cmp::min(self.iv_len as usize, 8);
-            hw.ctx[8..8 + n].copy_from_slice(&self.iv_origin.data[..n]);
+        if core::mem::take(&mut self.used) {
+            return Err(HaceCipherError::Busy);
         }
 
+        let hw = self.controller.crypto_ctx_mut();
+
         let mut out = CipherText {
-            data: [0; 272],
-            len: pt.len,
+            data: [0; 80],
+            len: pt.len + self.iv_len as usize,
         };
+
+        if HaceController::needs_iv(hw.cmd) {
+            let iv_off = HaceController::iv_out_offset(self.is_aes);
+            let n = self.iv_len as usize;
+            let dst = &mut out.data[iv_off..][..n];
+            dst.copy_from_slice(HaceController::iv_slice(&hw.ctx, self.is_aes, n));
+        }
 
         hw.src_sg.addr = pt.data.as_ptr() as u32;
         hw.dst_sg.addr = out.data.as_mut_ptr() as u32;
-        hw.src_sg.len = pt.len as u32 | (1 << 31);
-        hw.dst_sg.len = pt.len as u32 | (1 << 31);
         hw.cmd = self.cmd_base | HACE_CMD_ENCRYPT;
 
-        self.controller.start_crypto_operation(pt.len as u32);
+        self.controller.start_crypto_operation(
+            u32::try_from(pt.len).map_err(|_| HaceCipherError::InvalidDataLength)?,
+        );
+        self.used = true;
 
         Ok(out)
     }
 
     fn decrypt(&mut self, ct: Self::CipherText) -> Result<Self::PlainText, Self::Error> {
-        let hw = self.controller.crypto_ctx_mut();
-        let n = self.iv_len as usize;
-        if self.is_aes {
-            hw.ctx[0..n].copy_from_slice(&self.iv_origin.data[..n]);
-        } else {
-            hw.ctx[8..8 + n].copy_from_slice(&self.iv_origin.data[..n]);
+        if core::mem::take(&mut self.used) {
+            return Err(HaceCipherError::Busy);
         }
 
+        let hw = self.controller.crypto_ctx_mut();
+
         let mut out = PlainText {
-            data: [0; 256],
+            data: [0; 64],
             len: ct.len,
         };
 
         hw.src_sg.addr = ct.data.as_ptr() as u32;
         hw.dst_sg.addr = out.data.as_mut_ptr() as u32;
-        hw.src_sg.len = ct.len as u32 | (1 << 31);
-        hw.dst_sg.len = ct.len as u32 | (1 << 31);
         hw.cmd = self.cmd_base;
 
-        self.controller.start_crypto_operation(ct.len as u32);
+        self.controller.start_crypto_operation(
+            u32::try_from(ct.len).map_err(|_| HaceCipherError::InvalidDataLength)?,
+        );
+        self.used = true;
 
         Ok(out)
     }

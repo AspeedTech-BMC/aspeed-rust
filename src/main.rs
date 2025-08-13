@@ -22,6 +22,7 @@ use aspeed_ddk::tests::functional::gpio_test;
 use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
 use aspeed_ddk::tests::functional::hmac_test::run_hmac_tests;
 use aspeed_ddk::tests::functional::rsa_test::run_rsa_tests;
+use aspeed_ddk::tests::functional::symm_cipher_test::run_symm_cipher_tests;
 use panic_halt as _;
 
 use proposed_traits::system_control::ResetControl;
@@ -154,6 +155,8 @@ fn main() -> ! {
     run_hash_tests(&mut uart_controller, &mut hace_controller);
 
     run_hmac_tests(&mut uart_controller, &mut hace_controller);
+
+    run_symm_cipher_tests(&mut uart_controller, &mut hace_controller);
 
     // Enable RSA and ECC
     let _ = syscon.enable_clock(ClockId::ClkRSACLK as u8);
