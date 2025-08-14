@@ -6,7 +6,6 @@ use proposed_traits::common::{Endian, FromBytes};
 pub struct Aes256CbcTestVec {
     pub key: AesKey,
     pub iv: Iv,
-    pub iv_out: Iv,
     pub ptext: PlainText,
     pub ctext: CipherText,
 }
@@ -31,11 +30,6 @@ impl Aes256CbcTestVec {
             0x0e, 0x0f,
         ];
 
-        let iv_out_bytes: [u8; 16] = [
-            0xb2, 0xeb, 0x05, 0xe2, 0xc3, 0x9b, 0xe9, 0xfc, 0xda, 0x6c, 0x19, 0x07, 0x8c, 0x6a,
-            0x9d, 0x1b,
-        ];
-
         let ptext_bytes: [u8; 64] = [
             0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
             0x17, 0x2a, 0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac,
@@ -55,7 +49,6 @@ impl Aes256CbcTestVec {
         Self {
             key: AesKey::from_bytes(&key_bytes, Endian::Big).unwrap(),
             iv: Iv::from_bytes(&iv_bytes, Endian::Big).unwrap(),
-            iv_out: Iv::from_bytes(&iv_out_bytes, Endian::Big).unwrap(),
             ptext: PlainText::from_bytes(&ptext_bytes, Endian::Big).unwrap(),
             ctext: CipherText::from_bytes(&ctext_bytes, Endian::Big).unwrap(),
         }
@@ -65,7 +58,6 @@ impl Aes256CbcTestVec {
 pub struct Aes192CbcTestVec {
     pub key: AesKey,
     pub iv: Iv,
-    pub iv_out: Iv,
     pub ptext: PlainText,
     pub ctext: CipherText,
 }
@@ -89,11 +81,6 @@ impl Aes192CbcTestVec {
             0x87, 0x31,
         ];
 
-        let iv_out_bytes: [u8; 16] = [
-            0xeb, 0xf2, 0x24, 0x16, 0x23, 0x2e, 0xb9, 0xf8, 0x1e, 0xd7, 0x6c, 0x35, 0xd6, 0xdc,
-            0xb4, 0x09,
-        ];
-
         let ptext_bytes: [u8; 64] = [
             0xc9, 0xd5, 0xe3, 0x82, 0xf0, 0x84, 0xcb, 0x68, 0xb1, 0x8a, 0x24, 0x20, 0xd4, 0xd7,
             0x24, 0xeb, 0x72, 0xcc, 0x19, 0x0a, 0x5d, 0xb4, 0x78, 0x03, 0x76, 0xcc, 0x10, 0xb2,
@@ -113,7 +100,6 @@ impl Aes192CbcTestVec {
         Self {
             key: AesKey::from_bytes(&key_bytes, Endian::Big).unwrap(),
             iv: Iv::from_bytes(&iv_bytes, Endian::Big).unwrap(),
-            iv_out: Iv::from_bytes(&iv_out_bytes, Endian::Big).unwrap(),
             ptext: PlainText::from_bytes(&ptext_bytes, Endian::Big).unwrap(),
             ctext: CipherText::from_bytes(&ctext_bytes, Endian::Big).unwrap(),
         }
@@ -123,7 +109,6 @@ impl Aes192CbcTestVec {
 pub struct Aes128CbcTestVec {
     pub key: AesKey,
     pub iv: Iv,
-    pub iv_out: Iv,
     pub ptext: PlainText,
     pub ctext: CipherText,
 }
@@ -147,11 +132,6 @@ impl Aes128CbcTestVec {
             0x78, 0xa5,
         ];
 
-        let iv_out_bytes: [u8; 16] = [
-            0xc1, 0x77, 0x39, 0xae, 0xf1, 0xd0, 0xde, 0x62, 0xa5, 0xcd, 0x0e, 0x1f, 0x77, 0x9f,
-            0xb0, 0x8f,
-        ];
-
         let ptext_bytes: [u8; 64] = [
             0x63, 0x5d, 0x38, 0xc6, 0x47, 0xb9, 0x2e, 0xf5, 0x60, 0xaa, 0x6b, 0x4e, 0x01, 0xe7,
             0x6f, 0x5b, 0xf7, 0x17, 0x32, 0x08, 0x25, 0xe6, 0x66, 0x91, 0xc5, 0x32, 0x91, 0x32,
@@ -171,7 +151,6 @@ impl Aes128CbcTestVec {
         Self {
             key: AesKey::from_bytes(&key_bytes, Endian::Big).unwrap(),
             iv: Iv::from_bytes(&iv_bytes, Endian::Big).unwrap(),
-            iv_out: Iv::from_bytes(&iv_out_bytes, Endian::Big).unwrap(),
             ptext: PlainText::from_bytes(&ptext_bytes, Endian::Big).unwrap(),
             ctext: CipherText::from_bytes(&ctext_bytes, Endian::Big).unwrap(),
         }
@@ -181,7 +160,6 @@ impl Aes128CbcTestVec {
 pub struct DesCbcTestVec {
     pub key: DesKey,
     pub iv: Iv,
-    pub iv_out: Iv,
     pub ptext: PlainText,
     pub ctext: CipherText,
 }
@@ -197,7 +175,6 @@ impl DesCbcTestVec {
     pub fn new() -> Self {
         let key_bytes: [u8; 8] = [0xdb, 0x4f, 0x74, 0x41, 0x8a, 0xf9, 0x56, 0xdf];
         let iv_bytes: [u8; 8] = [0x7e, 0xa0, 0xd0, 0x3f, 0xd6, 0x58, 0xe5, 0x89];
-        let iv_out_bytes: [u8; 8] = [0xb7, 0x4f, 0xfd, 0x50, 0x27, 0xb8, 0x34, 0xa0];
         let ptext_bytes: [u8; 64] = [
             0xff, 0xb1, 0x8c, 0x27, 0x24, 0x20, 0x34, 0x7c, 0x1d, 0xed, 0x7a, 0x0b, 0x5d, 0xb9,
             0xe1, 0x21, 0xf1, 0x5e, 0x96, 0x4c, 0x84, 0x39, 0x6f, 0x34, 0x96, 0xfc, 0x76, 0x56,
@@ -216,7 +193,6 @@ impl DesCbcTestVec {
         Self {
             key: DesKey::from_bytes(&key_bytes, Endian::Big).unwrap(),
             iv: Iv::from_bytes(&iv_bytes, Endian::Big).unwrap(),
-            iv_out: Iv::from_bytes(&iv_out_bytes, Endian::Big).unwrap(),
             ptext: PlainText::from_bytes(&ptext_bytes, Endian::Big).unwrap(),
             ctext: CipherText::from_bytes(&ctext_bytes, Endian::Big).unwrap(),
         }
@@ -226,7 +202,6 @@ impl DesCbcTestVec {
 pub struct TdesCbcTestVec {
     pub key: TdesKey,
     pub iv: Iv,
-    pub iv_out: Iv,
     pub ptext: PlainText,
     pub ctext: CipherText,
 }
@@ -245,7 +220,6 @@ impl TdesCbcTestVec {
             0x4a, 0x62, 0x97, 0x70, 0xef, 0xd9, 0x20, 0xf7, 0x70, 0x86,
         ];
         let iv_bytes: [u8; 8] = [0x1f, 0xac, 0xe8, 0x69, 0x4a, 0xc2, 0xcb, 0x66];
-        let iv_out_bytes: [u8; 8] = [0x0f, 0x28, 0x2f, 0xa0, 0xe6, 0xcc, 0x5f, 0x7e];
         let ptext_bytes: [u8; 64] = [
             0xf8, 0x4c, 0x5e, 0x04, 0xcf, 0xba, 0xab, 0x0a, 0x03, 0xc2, 0x7c, 0xba, 0x44, 0xd6,
             0xd3, 0x1a, 0xc9, 0x0b, 0x9d, 0xe1, 0x39, 0xd4, 0xb7, 0x70, 0xb3, 0x50, 0x57, 0x78,
@@ -264,7 +238,6 @@ impl TdesCbcTestVec {
         Self {
             key: TdesKey::from_bytes(&key_bytes, Endian::Big).unwrap(),
             iv: Iv::from_bytes(&iv_bytes, Endian::Big).unwrap(),
-            iv_out: Iv::from_bytes(&iv_out_bytes, Endian::Big).unwrap(),
             ptext: PlainText::from_bytes(&ptext_bytes, Endian::Big).unwrap(),
             ctext: CipherText::from_bytes(&ctext_bytes, Endian::Big).unwrap(),
         }
