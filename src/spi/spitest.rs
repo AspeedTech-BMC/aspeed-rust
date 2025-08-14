@@ -16,11 +16,11 @@ use crate::common::{self, DmaBuffer, DummyDelay};
 use crate::spi::norflashblockdevice;
 use crate::spi::norflashblockdevice::{BlockAddrUsize, NorFlashBlockDevice};
 use crate::spi::spicontroller::SpiController;
-use crate::spimonitor::{RegionInfo, SpiMonitor, SpimExtMuxSel};
+use crate::spimonitor::SpiMonitorNum;
 use crate::uart;
 use crate::uart::{Config, UartController};
 use crate::{astdebug, pinctrl};
-use ast1060_pac::{Peripherals, Spipf, Spipf1, Spipf2, Spipf3};
+use ast1060_pac::Peripherals;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::spi::SpiDevice;
 use embedded_io::Write;
@@ -350,10 +350,10 @@ pub fn test_fmc(uart: &mut UartController<'_>) {
     let nor_write_data = nor_device_write_data(FMC_CS0_CAPACITY);
 
     // Wrap controller in a CS device (CS0)
-    let mut flash_device0: ChipSelectDevice<'_, FmcController<'_>, Spipf> = ChipSelectDevice {
+    let mut flash_device0: ChipSelectDevice<'_, FmcController<'_>> = ChipSelectDevice {
         bus: &mut controller,
         cs: 0,
-        spi_monitor: None,
+        spim: None,
     };
     test_read_jedec(uart, &mut flash_device0);
     let _ = flash_device0.nor_read_init(&nor_read_data);
@@ -362,10 +362,10 @@ pub fn test_fmc(uart: &mut UartController<'_>) {
     //astdebug::print_reg_u32(uart, FMC_MMAP_BASE, 0x80);
 
     // Wrap controller in a CS device (CS1)
-    let mut flash_device1: ChipSelectDevice<'_, FmcController<'_>, Spipf> = ChipSelectDevice {
+    let mut flash_device1: ChipSelectDevice<'_, FmcController<'_>> = ChipSelectDevice {
         bus: &mut controller,
         cs: 1,
-        spi_monitor: None,
+        spim: None,
     };
     test_read_jedec(uart, &mut flash_device1);
     let _ = flash_device1.nor_read_init(&nor_read_data);
@@ -434,12 +434,11 @@ pub fn test_spi(uart: &mut UartController<'_>) {
     let _result = spi_controller.init();
 
     //astdebug::print_reg_u32(uart, SPI0_CTRL_BASE, 0xb0);
-    let mut spi_monitor0 = start_spim0();
     // Wrap controller in a CS device (CS0)
     let mut flash_device = ChipSelectDevice {
         bus: &mut spi_controller,
         cs: 0,
-        spi_monitor: Some(&mut spi_monitor0),
+        spim: Some(SpiMonitorNum::SPIM0),
     };
 
     let nor_read_data: SpiNorData<'_> = nor_device_read_4b_data(SPI_CS0_CAPACITY);
@@ -642,7 +641,9 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
     pinctrl::Pinctrl::apply_pinctrl_group(pinctrl::PINCTRL_SPI2_QUAD);
 
     test_log!(uart, "SPI1 set pinctrl");
-    test_log!(uart, " SCU:: 0x{:08x}", SCU_BASE);
+    let scu_qspi_mux: &mut [u32] =
+        unsafe { core::slice::from_raw_parts_mut((SCU_BASE + 0xf0) as *mut u32, 4) };
+    scu_qspi_mux[0] = 0x0000_fff0;
 
     let peripherals = unsafe { Peripherals::steal() };
     let spi_uart = peripherals.uart;
@@ -672,17 +673,15 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
     let nor_read_data: SpiNorData<'_> = nor_device_read_4b_data(SPI_CS0_CAPACITY);
     let nor_write_data = nor_device_write_4b_data(SPI_CS0_CAPACITY);
 
+    // Wrap controller in a CS device (CS0)
+    let mut flash_device = ChipSelectDevice {
+        bus: &mut spi_controller,
+        cs: 0,
+        spim: Some(SpiMonitorNum::SPIM2),
+    };
+
+    test_read_jedec(uart, &mut flash_device);
     if true {
-        let mut spi_monitor2 = start_spim2();
-        // Wrap controller in a CS device (CS0)
-        let mut flash_device = ChipSelectDevice {
-            bus: &mut spi_controller,
-            cs: 0,
-            spi_monitor: Some(&mut spi_monitor2),
-        };
-
-        test_read_jedec(uart, &mut flash_device);
-
         let mut delay1 = DummyDelay {};
 
         if read_id {
@@ -726,15 +725,14 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
             true,
         );
     }
-    {
+    if true {
         test_log!(uart, "####### SPI 2@1#######");
         //NOTE: When SPI2 controller accesses the SPI flash through SPIM3/4 output pins by configuring SCU0F0[3:0],
         // only CS0 decoding address area can be used within this scenario. Thus, CS is fixed to 0.
-        let mut spi_monitor3 = start_spim3();
         let mut flash_device2 = ChipSelectDevice {
             bus: &mut spi_controller,
             cs: 0,
-            spi_monitor: Some(&mut spi_monitor3),
+            spim: Some(SpiMonitorNum::SPIM3),
         };
 
         let _ = flash_device2.nor_read_init(&nor_read_data);
@@ -758,147 +756,4 @@ pub fn test_spi2(uart: &mut UartController<'_>) {
         );
     }
     test_log!(uart, "################# SPI 2 TEST done ! ###############");
-}
-
-#[must_use]
-pub fn start_spim0() -> SpiMonitor<Spipf> {
-    let allow_cmds: [u8; 27] = [
-        0x03, 0x13, 0x0b, 0x0c, 0x6b, 0x6c, 0x01, 0x05, 0x35, 0x06, 0x04, 0x20, 0x21, 0x9f, 0x5a,
-        0xb7, 0xe9, 0x32, 0x34, 0xd8, 0xdc, 0x02, 0x12, 0x15, 0x31, 0x3b, 0x3c,
-    ];
-
-    let read_blocked_regions = [RegionInfo {
-        /*pfm*/
-        start: 0x0400_0000,
-        length: 0x0002_0000,
-    }];
-
-    let write_blocked_regions = [RegionInfo {
-        start: 0x0000_0000,
-        length: 0x0800_0000,
-    }];
-    let mut spi_monitor0 = SpiMonitor::<Spipf>::new(
-        true,
-        SpimExtMuxSel::SpimExtMuxSel1,
-        &allow_cmds,
-        u8::try_from(allow_cmds.len()).unwrap(),
-        &read_blocked_regions,
-        u8::try_from(read_blocked_regions.len()).unwrap(),
-        &write_blocked_regions,
-        u8::try_from(write_blocked_regions.len()).unwrap(),
-    );
-    spi_monitor0.spim_sw_rst();
-    spi_monitor0.aspeed_spi_monitor_init();
-
-    //TODO: when do we disable the mux?
-    //spi_monitor0.spim_ext_mux_config(SpimExtMuxSel::SpimExtMuxSel0);
-    spi_monitor0
-    // print spim pointer value
-}
-
-#[must_use]
-pub fn start_spim1() -> SpiMonitor<Spipf1> {
-    let allow_cmds: [u8; 27] = [
-        0x03, 0x13, 0x0b, 0x0c, 0x6b, 0x6c, 0x01, 0x05, 0x35, 0x06, 0x04, 0x20, 0x21, 0x9f, 0x5a,
-        0xb7, 0xe9, 0x32, 0x34, 0xd8, 0xdc, 0x02, 0x12, 0x15, 0x31, 0x3b, 0x3c,
-    ];
-
-    let write_blocked_regions = [RegionInfo {
-        start: 0x0000_0000,
-        length: 0x0800_0000,
-    }];
-    let mut spi_monitor1 = SpiMonitor::<Spipf1>::new(
-        true,
-        SpimExtMuxSel::SpimExtMuxSel1,
-        &allow_cmds,
-        u8::try_from(allow_cmds.len()).unwrap(),
-        &[],
-        0,
-        &write_blocked_regions,
-        u8::try_from(write_blocked_regions.len()).unwrap(),
-    );
-    spi_monitor1.spim_sw_rst();
-    spi_monitor1.aspeed_spi_monitor_init();
-    //spi_monitor1.spim_ext_mux_config(SpimExtMuxSel::SpimExtMuxSel0);
-
-    spi_monitor1
-}
-
-#[must_use]
-pub fn start_spim2() -> SpiMonitor<Spipf2> {
-    let allow_cmds: [u8; 27] = [
-        0x03, 0x13, 0x0b, 0x0c, 0x6b, 0x6c, 0x01, 0x05, 0x35, 0x06, 0x04, 0x20, 0x21, 0x9f, 0x5a,
-        0xb7, 0xe9, 0x32, 0x34, 0xd8, 0xdc, 0x02, 0x12, 0x15, 0x31, 0x3b, 0x3c,
-    ];
-
-    let write_blocked_regions = [RegionInfo {
-        start: 0x0000_0000,
-        length: 0x0800_0000,
-    }];
-    let mut spi_monitor2 = SpiMonitor::<Spipf2>::new(
-        true,
-        SpimExtMuxSel::SpimExtMuxSel1,
-        &allow_cmds,
-        u8::try_from(allow_cmds.len()).unwrap(),
-        &[],
-        0,
-        &write_blocked_regions,
-        u8::try_from(write_blocked_regions.len()).unwrap(),
-    );
-    spi_monitor2.spim_sw_rst();
-    spi_monitor2.aspeed_spi_monitor_init();
-    //spi_monitor2.spim_ext_mux_config(SpimExtMuxSel::SpimExtMuxSel0);
-
-    spi_monitor2
-}
-
-#[must_use]
-pub fn start_spim3() -> SpiMonitor<Spipf3> {
-    let allow_cmds: [u8; 27] = [
-        0x03, 0x13, 0x0b, 0x0c, 0x6b, 0x6c, 0x01, 0x05, 0x35, 0x06, 0x04, 0x20, 0x21, 0x9f, 0x5a,
-        0xb7, 0xe9, 0x32, 0x34, 0xd8, 0xdc, 0x02, 0x12, 0x15, 0x31, 0x3b, 0x3c,
-    ];
-    let read_blocked_regions: [RegionInfo; 3] = [
-        RegionInfo {
-            start: 0x0000_0000,
-            length: 0x0001_0000,
-        },
-        RegionInfo {
-            start: 0x0027_4000,
-            length: 0x0000_4000,
-        },
-        RegionInfo {
-            start: 0x01E0_0000,
-            length: 0x0008_0000,
-        },
-    ];
-    let write_blocked_regions: [RegionInfo; 3] = [
-        RegionInfo {
-            start: 0x0000_0000,
-            length: 0x0001_0000,
-        },
-        RegionInfo {
-            start: 0x013F_C000,
-            length: 0x0002_8000,
-        },
-        RegionInfo {
-            start: 0x0FFF_8000,
-            length: 0x0000_8000,
-        },
-    ];
-    let mut spi_monitor3 = SpiMonitor::<Spipf3>::new(
-        true,
-        SpimExtMuxSel::SpimExtMuxSel1,
-        &allow_cmds,
-        u8::try_from(allow_cmds.len()).unwrap(),
-        &read_blocked_regions,
-        u8::try_from(read_blocked_regions.len()).unwrap(),
-        &write_blocked_regions,
-        u8::try_from(write_blocked_regions.len()).unwrap(),
-    );
-    spi_monitor3.spim_sw_rst();
-    spi_monitor3.aspeed_spi_monitor_init();
-    //spi_monitor3.spim_ext_mux_config(SpimExtMuxSel::SpimExtMuxSel0);
-
-    spi_monitor3
 }

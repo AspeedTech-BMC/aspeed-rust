@@ -395,6 +395,21 @@ const PIN_SPIM1_CLK_OUT_BIT: u32 = 21;
 const PIN_SPIM2_CLK_OUT_BIT: u32 = 3;
 const PIN_SPIM3_CLK_OUT_BIT: u32 = 17;
 
+pub fn spim_scu_ctrl_set(mask: u32, val: u32) {
+    let scu = unsafe { &*ast1060_pac::Scu::ptr() };
+    let mut reg_val = scu.scu0f0().read().bits();
+    reg_val &= !mask;
+    reg_val |= val;
+    scu.scu0f0().write(|w| unsafe { w.bits(reg_val) });
+}
+
+pub fn spim_scu_ctrl_clear(clear_bits: u32) {
+    let scu = unsafe { &*ast1060_pac::Scu::ptr() };
+    let mut reg_val = scu.scu0f0().read().bits();
+    reg_val &= !clear_bits;
+    scu.scu0f0().write(|w| unsafe { w.bits(reg_val) });
+}
+
 pub fn spim_proprietary_pre_config() {
     let scu = unsafe { &*ast1060_pac::Scu::ptr() };
     let gpio = unsafe { &*ast1060_pac::Gpio::ptr() };

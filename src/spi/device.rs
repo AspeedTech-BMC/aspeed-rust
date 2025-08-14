@@ -1,40 +1,45 @@
 // Licensed under the Apache-2.0 license
 
+use crate::spimonitor::SpiMonitorNum;
+
 use super::SpiBusWithCs;
 use super::SpiError;
-use crate::spimonitor::{SpiMonitor, SpipfInstance};
 use embedded_hal::spi::{ErrorType, Operation, SpiDevice};
 
 #[derive(Debug)]
-pub struct ChipSelectDevice<'a, B, SPIPF>
+pub struct ChipSelectDevice<'a, B>
 where
     B: SpiBusWithCs,
-    SPIPF: SpipfInstance,
 {
     pub bus: &'a mut B,
     pub cs: usize,
-    pub spi_monitor: Option<&'a mut SpiMonitor<SPIPF>>,
+    pub spim: Option<SpiMonitorNum>,
 }
 
-impl<'a, B, SPIPF> ErrorType for ChipSelectDevice<'a, B, SPIPF>
+impl<'a, B> ErrorType for ChipSelectDevice<'a, B>
 where
     B: SpiBusWithCs,
-    SPIPF: SpipfInstance,
 {
     type Error = B::Error;
 }
 
-impl<'a, B, SPIPF> SpiDevice for ChipSelectDevice<'a, B, SPIPF>
+impl From<SpiMonitorNum> for u32 {
+    #[inline]
+    fn from(v: SpiMonitorNum) -> u32 {
+        v as u32
+    }
+}
+
+impl<'a, B> SpiDevice for ChipSelectDevice<'a, B>
 where
     B: SpiBusWithCs,
-    SPIPF: SpipfInstance,
 {
     fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), SpiError> {
         self.bus.select_cs(self.cs)?;
-        if let Some(spim) = self.spi_monitor.as_mut() {
+        if let Some(spim) = self.spim {
             if self.bus.get_master_id() != 0 {
-                spim.spim_scu_ctrl_set(0x8, 0x8);
-                spim.spim_scu_ctrl_set(0x7, 1 + SPIPF::FILTER_ID as u32);
+                super::spim_scu_ctrl_set(0x8, 0x8);
+                super::spim_scu_ctrl_set(0x7, 1 + u32::from(spim));
             }
             super::spim_proprietary_pre_config();
         }
@@ -48,11 +53,10 @@ where
                 Operation::DelayNs(_) => todo!(),
             };
         }
-
-        super::spim_proprietary_post_config();
-        if let Some(spim) = self.spi_monitor.as_mut() {
+        if let Some(_spim) = self.spim {
+            super::spim_proprietary_post_config();
             if self.bus.get_master_id() != 0 {
-                spim.spim_scu_ctrl_clear(0xf);
+                super::spim_scu_ctrl_clear(0xf);
             }
         }
         Ok(())

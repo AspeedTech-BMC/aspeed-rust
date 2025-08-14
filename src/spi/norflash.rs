@@ -4,7 +4,6 @@ use super::device::ChipSelectDevice;
 use super::SpiBusWithCs;
 use super::{norflash, SpiError, SPI_NOR_DATA_DIRECT_READ, SPI_NOR_DATA_DIRECT_WRITE};
 use crate::common::DummyDelay;
-use crate::spimonitor::SpipfInstance;
 use embedded_hal::delay::DelayNs;
 
 /* Flash opcodes */
@@ -124,32 +123,31 @@ macro_rules! start_transfer {
         let _ = (|| -> Result<(), SpiError> {
             $this.bus.select_cs($this.cs)?;
             // SPIM config
-            if let Some(spim) = $this.spi_monitor.as_mut() {
+            if let Some(spim) = $this.spim {
                 if $this.bus.get_master_id() != 0 {
-                    spim.spim_scu_ctrl_set(0x8, 0x8);
-                    spim.spim_scu_ctrl_set(0x7, 1 + SPIPF::FILTER_ID as u32);
+                    super::spim_scu_ctrl_set(0x8, 0x8);
+                    super::spim_scu_ctrl_set(0x7, 1 + u32::from(spim));
                 }
                 super::spim_proprietary_pre_config();
             }
-
             $this.bus.nor_transfer($data)?;
             //SPIM deconfig
-            super::spim_proprietary_post_config();
-            if let Some(spim) = $this.spi_monitor.as_mut() {
+            if let Some(_spim) = $this.spim {
+                super::spim_proprietary_post_config();
                 if $this.bus.get_master_id() != 0 {
-                    spim.spim_scu_ctrl_clear(0xf);
+                    super::spim_scu_ctrl_clear(0xf);
                 }
             }
+
             Ok(())
         })();
     }};
 }
 
 //TODO: add 4byte address mode support
-impl<'a, B, SPIPF> SpiNorDevice for ChipSelectDevice<'a, B, SPIPF>
+impl<'a, B> SpiNorDevice for ChipSelectDevice<'a, B>
 where
     B: SpiBusWithCs,
-    SPIPF: SpipfInstance,
 {
     type Error = B::Error;
 
@@ -325,20 +323,20 @@ where
     }
 
     fn nor_read_init(&mut self, nor_data: &SpiNorData) -> Result<(), Self::Error> {
-        if let Some(spim) = self.spi_monitor.as_mut() {
+        if let Some(spim) = self.spim {
             if self.bus.get_master_id() != 0 {
-                spim.spim_scu_ctrl_set(0x8, 0x8);
-                spim.spim_scu_ctrl_set(0x7, 1 + SPIPF::FILTER_ID as u32);
+                super::spim_scu_ctrl_set(0x8, 0x8);
+                super::spim_scu_ctrl_set(0x7, 1 + u32::from(spim));
             }
             super::spim_proprietary_pre_config();
         }
 
         self.bus.nor_read_init(self.cs, nor_data);
 
-        super::spim_proprietary_post_config();
-        if let Some(spim) = self.spi_monitor.as_mut() {
+        if let Some(_spim) = self.spim {
+            super::spim_proprietary_post_config();
             if self.bus.get_master_id() != 0 {
-                spim.spim_scu_ctrl_clear(0xf);
+                super::spim_scu_ctrl_clear(0xf);
             }
         }
         Ok(())

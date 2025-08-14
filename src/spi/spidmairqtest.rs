@@ -9,10 +9,9 @@ use crate::spi::norflash::{SpiNorData, SpiNorDevice};
 use crate::spi::spicontroller::SpiController;
 use crate::spi::spitest::{self, DeviceId, FMC_CONFIG};
 use crate::spi::SpiData;
-use crate::spimonitor::{RegionInfo, SpiMonitor, SpimExtMuxSel};
+use crate::spimonitor::SpiMonitorNum;
 use crate::uart::UartController;
 use crate::{astdebug, pinctrl};
-use ast1060_pac::Spipf;
 use core::ptr;
 use cortex_m::peripheral::NVIC;
 use embedded_hal::delay::DelayNs;
@@ -24,18 +23,13 @@ static mut FMC_CONTROLLER: Option<FmcController<'static>> = None;
 static mut SPI_CONTROLLER: Option<SpiController<'static>> = None;
 //static mut SPI1_CONTROLLER: Option<SpiController<'static>> = None;
 
-static mut FMC_DEVICE0: Option<ChipSelectDevice<'static, FmcController<'static>, Spipf>> = None;
-static mut FMC_DEV0_PTR: *mut ChipSelectDevice<'_, FmcController<'_>, Spipf> =
-    core::ptr::null_mut();
-static mut FMC_DEVICE1: Option<ChipSelectDevice<'static, FmcController<'static>, Spipf>> = None;
-static mut FMC_DEV1_PTR: *mut ChipSelectDevice<'_, FmcController<'_>, Spipf> =
-    core::ptr::null_mut();
+static mut FMC_DEVICE0: Option<ChipSelectDevice<'static, FmcController<'static>>> = None;
+static mut FMC_DEV0_PTR: *mut ChipSelectDevice<'_, FmcController<'_>> = core::ptr::null_mut();
+static mut FMC_DEVICE1: Option<ChipSelectDevice<'static, FmcController<'static>>> = None;
+static mut FMC_DEV1_PTR: *mut ChipSelectDevice<'_, FmcController<'_>> = core::ptr::null_mut();
 
-static mut SPI_DEVICE0: Option<ChipSelectDevice<'static, SpiController<'static>, Spipf>> = None;
-static mut SPI_DEV0_PTR: *mut ChipSelectDevice<'_, SpiController<'_>, Spipf> =
-    core::ptr::null_mut();
-
-static mut SPI_MONITOR0: Option<SpiMonitor<Spipf>> = None;
+static mut SPI_DEVICE0: Option<ChipSelectDevice<'static, SpiController<'static>>> = None;
+static mut SPI_DEV0_PTR: *mut ChipSelectDevice<'_, SpiController<'_>> = core::ptr::null_mut();
 
 static mut REQUST_ALLDONE: bool = true;
 // DMA operation type selector
@@ -377,7 +371,7 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
         let flash_device0 = ChipSelectDevice {
             bus: controller,
             cs: 0,
-            spi_monitor: None,
+            spim: None,
         };
         FMC_DEVICE0 = Some(flash_device0);
 
@@ -402,7 +396,7 @@ pub fn test_fmc_dma_irq(uart: &mut UartController<'_>) {
         let flash_device1 = ChipSelectDevice {
             bus: controller1, // reuse same ref
             cs: 1,
-            spi_monitor: None,
+            spim: None,
         };
 
         FMC_DEVICE1 = Some(flash_device1);
@@ -477,12 +471,11 @@ pub fn test_spi_dma_irq(uart: &mut UartController<'_>) {
         let nor_read_data: SpiNorData<'_> =
             spitest::nor_device_read_4b_data(spitest::SPI_CS0_CAPACITY);
         let nor_write_data = spitest::nor_device_write_4b_data(spitest::SPI_CS0_CAPACITY);
-        let spi_monitor0 = start_static_spim0();
 
         let flash_device0 = ChipSelectDevice {
             bus: controller,
             cs: 0,
-            spi_monitor: Some(spi_monitor0),
+            spim: Some(SpiMonitorNum::SPIM0),
         };
 
         SPI_DEVICE0 = Some(flash_device0);
@@ -516,40 +509,4 @@ pub fn test_spi_dma_irq(uart: &mut UartController<'_>) {
     } //unsafe
 
     scu_qspi_mux[0] = 0x0000_0000;
-}
-
-static ALLOW_CMDS: [u8; 27] = [
-    0x03, 0x13, 0x0b, 0x0c, 0x6b, 0x6c, 0x01, 0x05, 0x35, 0x06, 0x04, 0x20, 0x21, 0x9f, 0x5a, 0xb7,
-    0xe9, 0x32, 0x34, 0xd8, 0xdc, 0x02, 0x12, 0x15, 0x31, 0x3b, 0x3c,
-];
-
-static READ_BLOCKED_REGIONS: [RegionInfo; 1] = [RegionInfo {
-    start: 0x0400_0000,
-    length: 0x0002_0000,
-}];
-
-static WRITE_BLOCKED_REGIONS: [RegionInfo; 1] = [RegionInfo {
-    start: 0x0000_0000,
-    length: 0x0800_0000,
-}];
-
-pub fn start_static_spim0() -> &'static mut SpiMonitor<Spipf> {
-    unsafe {
-        SPI_MONITOR0 = Some(SpiMonitor::new(
-            true,
-            SpimExtMuxSel::SpimExtMuxSel1,
-            &ALLOW_CMDS,
-            u8::try_from(ALLOW_CMDS.len()).unwrap(),
-            &READ_BLOCKED_REGIONS,
-            u8::try_from(READ_BLOCKED_REGIONS.len()).unwrap(),
-            &WRITE_BLOCKED_REGIONS,
-            u8::try_from(WRITE_BLOCKED_REGIONS.len()).unwrap(),
-        ));
-
-        let monitor = SPI_MONITOR0.as_mut().unwrap();
-        monitor.spim_sw_rst();
-        monitor.aspeed_spi_monitor_init();
-
-        monitor
-    }
 }

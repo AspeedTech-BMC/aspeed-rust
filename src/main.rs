@@ -18,10 +18,10 @@ use aspeed_ddk::syscon::{ClockId, ResetId, SysCon};
 use fugit::MillisDurationU32 as MilliSeconds;
 
 use aspeed_ddk::tests::functional::ecdsa_test::run_ecdsa_tests;
-use aspeed_ddk::tests::functional::gpio_test;
 use aspeed_ddk::tests::functional::hash_test::run_hash_tests;
 use aspeed_ddk::tests::functional::hmac_test::run_hmac_tests;
 use aspeed_ddk::tests::functional::rsa_test::run_rsa_tests;
+use aspeed_ddk::tests::functional::{gpio_test, spim_test};
 use panic_halt as _;
 
 use proposed_traits::system_control::ResetControl;
@@ -142,6 +142,7 @@ fn main() -> ! {
     writeln!(uart_controller, "\r\nHello, world!!\r\n").unwrap();
 
     let delay = DummyDelay;
+
     let mut syscon = SysCon::new(delay.clone(), scu);
 
     // Enable HACE (Hash and Crypto Engine)
@@ -166,7 +167,7 @@ fn main() -> ! {
     gpio_test::test_gpioa(&mut uart_controller);
     test_wdt(&mut uart_controller);
 
-    let test_spicontroller = true;
+    let test_spicontroller = false;
     let test_irq = true;
     if test_spicontroller {
         if test_irq {
@@ -180,6 +181,15 @@ fn main() -> ! {
             //gpio_test::test_gpio_flash_power(&mut uart_controller);
             // spi::spitest::test_spi2(&mut uart_controller);
         }
+        let mut delay1 = DummyDelay;
+        delay1.delay_ns(10_000_000);
+    }
+    let spim_test = false;
+    if spim_test {
+        // use to release ast2600
+        spim_test::test_spim0(&mut uart_controller);
+        gpio_test::test_gpio_flash_power(&mut uart_controller);
+        gpio_test::test_gpio_bmc_reset(&mut uart_controller);
     }
     // Initialize the peripherals here if needed
     loop {
