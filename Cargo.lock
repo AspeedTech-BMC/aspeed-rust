@@ -71,6 +71,7 @@ dependencies = [
  "fugit",
  "heapless",
  "hex-literal",
+ "nb 1.1.0",
  "panic-halt",
  "paste",
  "proposed-traits",
@@ -79,7 +80,7 @@ dependencies = [
 [[package]]
 name = "ast1060-pac"
 version = "0.1.0"
-source = "git+https://github.com/AspeedTech-BMC/ast1060-pac.git#1ad5938648ccdc702afcd51651c90b3d71b11735"
+source = "git+https://github.com/AspeedTech-BMC/ast1060-pac.git#f6fd1c82a3d4ca05ed921ecac24356637ab53b7d"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
