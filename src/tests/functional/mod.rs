@@ -13,6 +13,4 @@ pub mod ofb_test_vec;
 pub mod rsa_test;
 pub mod rsa_test_vec;
 pub mod symm_cipher_test;
-pub mod rsa_test;
-pub mod rsa_test_vec;
 pub mod timer_test;
